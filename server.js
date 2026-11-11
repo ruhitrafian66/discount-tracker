@@ -30,6 +30,24 @@ async function save(name, data) {
   const tmp = file(name + '.tmp');
   await fsp.writeFile(tmp, JSON.stringify(data));
   await fsp.rename(tmp, file(name));
+  touch();
+}
+
+// ---- view cache -------------------------------------------------------------
+// Computing the deals view costs real CPU on a small board, and its inputs only
+// change when settings, offers or Kassalapp data change. `rev` counts those
+// changes (every save() bumps it); cached values are reused while it stands still.
+// They also expire by time, because "this week" and the next fetch move with the clock.
+let rev = 0;
+function touch() { rev++; }
+const VIEW_TTL = 5 * 60e3;
+function cached(fn) {
+  let key = null, at = 0, value;
+  return () => {
+    const k = `${rev}|${status.refreshing}|${status.kassalRefreshing}|${status.kassalError}`;
+    if (k !== key || Date.now() - at > VIEW_TTL) { value = fn(); key = k; at = Date.now(); }
+    return value;
+  };
 }
 
 const DEFAULT_SETTINGS = {
@@ -102,6 +120,7 @@ async function refreshKassal() {
       try {
         const products = await kassal.productsForTerms(settings.kassalKey, terms);
         kassalCache[item.id] = { fetchedAt: Date.now(), termsKey: key, products };
+        touch();
       } catch (e) {
         status.kassalError = e.status === 401 ? 'Kassalapp rejected the API key (401).' : e.message;
         if (e.status === 401) break;
@@ -120,6 +139,7 @@ function refreshAll() {
   refreshOffers()
     .catch((e) => log('offers refresh failed:', e.message))
     .then(() => refreshKassal())
+    .then(() => { stateBody(); })  // warm the view cache so the next page load is instant
     .catch((e) => log('kassal refresh failed:', e.message));
 }
 
@@ -132,10 +152,10 @@ function allDealers() {
 }
 function dealerName(id) { return (allDealers().find((d) => d.id === id) || { name: id }).name; }
 
-function weekOffers() {
-  const now = Date.now();
-  return settings.shops.flatMap((id) => offersCache.byDealer[id] || []).filter((o) => engine.isThisWeek(o, now));
-}
+const weekOffers = cached(() => {
+  const now = Date.now(), end = engine.endOfWeek(now);
+  return settings.shops.flatMap((id) => offersCache.byDealer[id] || []).filter((o) => engine.isThisWeek(o, now, end));
+});
 
 function stateView() {
   const offers = weekOffers();
@@ -161,6 +181,27 @@ function stateView() {
     },
     result,
   };
+}
+
+// The state as served: serialised once per change, with an ETag so a reload of
+// an unchanged page gets an empty 304.
+const stateBody = cached(() => {
+  const body = JSON.stringify(stateView());
+  return { body, etag: `"${crypto.createHash('sha1').update(body).digest('hex').slice(0, 20)}"` };
+});
+
+// nginx turns our ETag into a weak one (W/"...") when it gzips the response.
+function etagMatches(req, etag) {
+  const inm = req.headers['if-none-match'];
+  return Boolean(inm) && inm.split(',').some((t) => t.trim().replace(/^W\//, '') === etag);
+}
+
+function sendState(req, res, code = 200) {
+  const { body, etag } = stateBody();
+  const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache', ETag: etag, 'X-Content-Type-Options': 'nosniff' };
+  if (code === 200 && etagMatches(req, etag)) { res.writeHead(304, headers); return res.end(); }
+  res.writeHead(code, headers);
+  res.end(body);
 }
 
 // ---- validation ---------------------------------------------------------
@@ -207,7 +248,7 @@ async function api(req, res, url) {
   const m = req.method;
   const p = url.pathname;
 
-  if (m === 'GET' && p === '/api/state') return send(res, 200, stateView());
+  if (m === 'GET' && p === '/api/state') return sendState(req, res);
 
   if (m === 'GET' && p === '/api/offers') {
     // Same word rules as tracked items, so a search here previews what a term would match.
@@ -238,7 +279,7 @@ async function api(req, res, url) {
     }
     await save('settings.json', settings);
     refreshAll();
-    return send(res, 200, stateView());
+    return sendState(req, res);
   }
 
   if (m === 'POST' && p === '/api/items') {
@@ -247,7 +288,7 @@ async function api(req, res, url) {
     settings.trackedItems.push(item);
     await save('settings.json', settings);
     refreshKassal().catch((e) => log(e.message));
-    return send(res, 201, stateView());
+    return sendState(req, res, 201);
   }
 
   // Bulk delete: { ids: [...] }
@@ -257,7 +298,7 @@ async function api(req, res, url) {
     if (!ids.size) throw httpError(400, 'No items selected');
     settings.trackedItems = settings.trackedItems.filter((i) => !ids.has(i.id));
     await save('settings.json', settings);
-    return send(res, 200, stateView());
+    return sendState(req, res);
   }
 
   const im = p.match(/^\/api\/items\/([\w-]+)$/);
@@ -268,19 +309,25 @@ async function api(req, res, url) {
     else { await readJson(req); settings.trackedItems.splice(idx, 1); }
     await save('settings.json', settings);
     refreshKassal().catch((e) => log(e.message));
-    return send(res, 200, stateView());
+    return sendState(req, res);
   }
 
   throw httpError(404, 'Not found');
 }
 
-async function staticFile(res, pathname) {
+async function staticFile(req, res, pathname) {
   const rel = pathname === '/' ? 'index.html' : pathname.slice(1);
   const full = path.join(PUBLIC, rel);
   if (!full.startsWith(PUBLIC + path.sep)) return send(res, 404, 'Not found', 'text/plain');
   try {
+    const st = await fsp.stat(full);
+    if (!st.isFile()) throw new Error('not a file');
+    // Files only change on deploy; the browser revalidates and usually gets a 304.
+    const etag = `"${st.size.toString(36)}-${Math.round(st.mtimeMs).toString(36)}"`;
+    const headers = { 'Content-Type': MIME[path.extname(full)] || 'application/octet-stream', 'Cache-Control': 'no-cache', ETag: etag, 'X-Content-Type-Options': 'nosniff' };
+    if (etagMatches(req, etag)) { res.writeHead(304, headers); return res.end(); }
     const body = await fsp.readFile(full);
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(full)] || 'application/octet-stream', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' });
+    res.writeHead(200, headers);
     res.end(body);
   } catch {
     send(res, 404, 'Not found', 'text/plain');
@@ -291,7 +338,7 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
     if (url.pathname.startsWith('/api/')) await api(req, res, url);
-    else if (req.method === 'GET') await staticFile(res, url.pathname);
+    else if (req.method === 'GET') await staticFile(req, res, url.pathname);
     else send(res, 405, { error: 'Method not allowed' });
   } catch (e) {
     if (!e.code || typeof e.code !== 'number') log('error:', e.stack || e.message);
@@ -303,6 +350,7 @@ function log(...a) { console.log(new Date().toISOString(), ...a); }
 
 if (require.main === module) {
   server.listen(PORT, HOST, () => log(`discount-tracker listening on http://${HOST}:${PORT}`));
+  setImmediate(() => { const t = Date.now(); stateBody(); log(`view cache warmed in ${Date.now() - t} ms`); });
   if (!process.env.DISABLE_FETCH) {  // set in CI to avoid calling external APIs
     // Cheap local check; it only calls the APIs when the weekly slot has passed
     // (or after downtime over the slot, or for a failed shop).

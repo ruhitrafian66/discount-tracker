@@ -21,6 +21,15 @@ git push origin main                       # deploys: CI passes -> server pulls 
 - Never return the Kassalapp key to the client; the API only exposes `kassalKeySet`.
 - One popup shows every offer: `showOffer()` in `public/app.js`, used by Deals, Dropped offers and Browse. Offers that are not shown deals get their display shape from `engine.describeOffer()` (dropped entries and `/api/offers`). Add a field in both places, not per list.
 
+## Performance (the server is a small ARM board, ~20x slower than a laptop)
+
+Opening the app must stay fast; `/api/state` once took 2.7 s there. Rules that keep it at a few ms:
+
+- `server.js` caches the week's offers and the serialised state (`cached()`, keyed on `rev`). Anything that changes what the view shows must end in `save()` or call `touch()`, or the old view keeps being served. The cache also expires after 5 minutes because "this week" depends on the clock.
+- Never construct `Intl.DateTimeFormat` per offer or per request; use `osloParts()` in the engine. Pass a precomputed `end` to `isThisWeek()` when filtering.
+- `fold()`, `words()` and `termWords()` are memoised per string, and `compileItem()` per item object. Tracked items are replaced, never edited in place, so that cache stays valid; keep it that way. Do not mutate arrays returned by `words()`.
+- Static files and `/api/state` send ETags; nginx gzips JS, CSS and JSON (in `deploy/nginx.conf.template`, applied by `setup-server.sh`, not by the pull deploy).
+
 ## The user's rules (do not weaken)
 
 1. Show only tracked items (match terms / exclude words).

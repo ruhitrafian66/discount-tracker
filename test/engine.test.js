@@ -236,6 +236,27 @@ test('a dropped offer carries the details needed to show it', () => {
   assert.equal(r.dropped.find((x) => x.shop === 'Extra').regular, null);
 });
 
+test('isThisWeek gives the same answer with a precomputed week end', () => {
+  const end = E.endOfWeek(NOW);
+  const cases = [
+    ['2026-11-09T00:00:00+0000', '2026-11-15T22:59:59+0000'],  // this week
+    ['2026-11-01T00:00:00+0000', '2026-11-10T00:00:00+0000'],  // already ended
+    ['2026-11-16T00:00:00+0000', '2026-11-22T00:00:00+0000'],  // starts next week
+    ['2026-11-13T00:00:00+0000', '2026-11-20T00:00:00+0000'],  // starts later this week
+  ];
+  const got = cases.map(([run_from, run_till]) => [E.isThisWeek({ run_from, run_till }, NOW), E.isThisWeek({ run_from, run_till }, NOW, end)]);
+  assert.deepEqual(got, [[true, true], [false, false], [false, false], [true, true]]);
+});
+
+test('editing an item (a new object) is matched with its new terms', () => {
+  const before = { id: 'x', name: 'X', terms: ['smør'] };
+  assert.ok(E.itemMatches(before, 'Smør', ''));
+  const after = { ...before, terms: ['ost'], exclude: ['smør'] };
+  assert.ok(!E.itemMatches(after, 'Smør', ''));
+  assert.ok(E.itemMatches(after, 'Ost', ''));
+  assert.ok(E.itemMatches(before, 'Smør', ''));
+});
+
 test('shop keys line up across sources', () => {
   assert.equal(E.shopKey('Coop Extra'), E.shopKey('Extra'));
   assert.equal(E.shopKey('Coop Obs'), E.shopKey('Obs'));

@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Tilbud Tracker</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏷️</text></svg>">
+  <!-- Start the data request and the image-host connection while app.js is still downloading. -->
+  <link rel="preload" href="/api/state" as="fetch" crossorigin>
+  <link rel="preconnect" href="https://image-transformer-api.tjek.com">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -93,6 +96,6 @@
 
   <dialog id="deal-dialog" class="deal-dialog" aria-labelledby="dd-title"></dialog>
   <div id="toast" role="status" hidden></div>
-  <script src="app.js"></script>
+  <script src="app.js" defer></script>
 </body>
 </html>
