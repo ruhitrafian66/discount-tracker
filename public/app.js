@@ -5,7 +5,7 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&':
 const nok = new Intl.NumberFormat('nb-NO', { style: 'currency', currency: 'NOK', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const kr = (n) => nok.format(n);
 const day = new Intl.DateTimeFormat('nb-NO', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Europe/Oslo' });
-const time = new Intl.DateTimeFormat('nb-NO', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Oslo' });
+const dateTime = new Intl.DateTimeFormat('nb-NO', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Oslo' });
 
 const CITIES = [
   ['Oslo', 59.9139, 10.7522], ['Bergen', 60.3913, 5.3221], ['Trondheim', 63.4305, 10.3951],
@@ -52,12 +52,12 @@ function renderStatus() {
   const st = state.status;
   const parts = [];
   if (st.refreshing) parts.push('Fetching offers…');
-  else if (st.fetchedAt) parts.push(`${st.offerCount} offers this week · updated ${time.format(new Date(st.fetchedAt))}`);
+  else if (st.fetchedAt) parts.push(`${st.offerCount} offers this week (fetched ${dateTime.format(new Date(st.fetchedAt))})`);
   else parts.push('No offers fetched yet');
   if (st.kassalRefreshing) parts.push('looking up regular prices…');
+  parts.push(`next update ${dateTime.format(new Date(st.nextFetch))}`);
   parts.push(`${state.settings.location.name} +${state.settings.location.radiusKm} km`);
   $('#status').textContent = parts.join(' · ');
-  $('#refresh').disabled = st.refreshing;
 }
 
 // ---- deals ----
@@ -119,18 +119,52 @@ function dealHtml(i) {
 }
 
 // ---- tracked items ----
+// Selection for bulk actions, and which delete is awaiting in-page confirmation
+// (null, 'bulk', or an item id).
+const selected = new Set();
+let confirming = null;
+
 function renderItems() {
   const items = state.settings.trackedItems;
+  for (const id of [...selected]) if (!items.some((i) => i.id === id)) selected.delete(id);
+  if (confirming && confirming !== 'bulk' && !items.some((i) => i.id === confirming)) confirming = null;
+  if (confirming === 'bulk' && !selected.size) confirming = null;
+
+  const n = selected.size;
+  const all = items.length > 0 && n === items.length;
+  $('#items-toolbar').innerHTML = !items.length ? '' : confirming === 'bulk'
+    ? `<div class="confirm" role="alertdialog" aria-label="Confirm delete">
+        <span>Stop tracking <b>${n}</b> item${n === 1 ? '' : 's'}? This can't be undone.</span>
+        <button class="btn danger small" data-act="bulk-yes">Delete ${n}</button>
+        <button class="btn ghost small" data-act="cancel">Cancel</button>
+      </div>`
+    : `<label class="selall"><input type="checkbox" data-act="all"${all ? ' checked' : ''}> Select all</label>
+       <span class="muted small">${n ? `${n} selected` : ''}</span>
+       <span class="spacer"></span>
+       <button class="btn ghost small" data-act="clear"${n ? '' : ' disabled'}>Clear</button>
+       <button class="btn danger small" data-act="bulk"${n ? '' : ' disabled'}>Delete selected${n ? ` (${n})` : ''}</button>`;
+  const allBox = $('#items-toolbar [data-act="all"]');
+  if (allBox) allBox.indeterminate = n > 0 && !all;
+
   const summary = new Map(state.result.summary.map((s) => [s.id, s]));
   $('#items').innerHTML = items.length ? items.map((it) => {
     const s = summary.get(it.id) || { candidates: 0, shown: 0 };
-    return `<div class="item-row">
+    const sel = selected.has(it.id);
+    const actions = confirming === it.id
+      ? `<div class="confirm" role="alertdialog" aria-label="Confirm delete">
+          <span>Delete?</span>
+          <button class="btn danger small" data-act="del-yes" data-id="${esc(it.id)}">Delete</button>
+          <button class="btn ghost small" data-act="cancel">Cancel</button>
+        </div>`
+      : `<button class="btn ghost small" data-act="edit" data-id="${esc(it.id)}">Edit</button>
+         <button class="btn ghost small" data-act="del" data-id="${esc(it.id)}" aria-label="Delete ${esc(it.name)}">✕</button>`;
+    return `<div class="item-row${sel ? ' selected' : ''}">
+      <input type="checkbox" class="pick" data-act="pick" data-id="${esc(it.id)}"${sel ? ' checked' : ''} aria-label="Select ${esc(it.name)}">
       <div class="grow">
         <div><b>${esc(it.name)}</b> <span class="pill">${s.shown} shown / ${s.candidates} matched</span></div>
         <div class="meta">Terms: ${it.terms.map(esc).join(', ')}${it.exclude.length ? ' · Excludes: ' + it.exclude.map(esc).join(', ') : ''}</div>
       </div>
-      <button class="btn ghost small" data-edit="${esc(it.id)}">Edit</button>
-      <button class="btn ghost small" data-del="${esc(it.id)}" aria-label="Delete ${esc(it.name)}">✕</button>
+      ${actions}
     </div>`;
   }).join('') : '<p class="muted">Nothing tracked yet.</p>';
 }
@@ -149,21 +183,52 @@ $('#item-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target;
   const body = { name: f.name.value, terms: f.terms.value, exclude: f.exclude.value };
+  const btn = f.querySelector('[type=submit]');
+  if (btn.disabled) return;
+  btn.disabled = true;  // no double submits
   try {
     setState(f.id.value ? await call('PUT', `/api/items/${f.id.value}`, body) : await call('POST', '/api/items', body));
     toast(`Saved "${body.name}"`);
     fillItemForm(null);
-  } catch (err) { toast(err.message); }
+  } catch (err) { toast(err.message); } finally { btn.disabled = false; }
 });
 $('#item-cancel').addEventListener('click', () => fillItemForm(null));
-$('#items').addEventListener('click', async (e) => {
-  const edit = e.target.closest('[data-edit]'), del = e.target.closest('[data-del]');
-  if (edit) { fillItemForm(state.settings.trackedItems.find((i) => i.id === edit.dataset.edit)); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-  if (del) {
-    const it = state.settings.trackedItems.find((i) => i.id === del.dataset.del);
-    if (!confirm(`Stop tracking "${it.name}"?`)) return;
-    try { setState(await call('DELETE', `/api/items/${it.id}`)); } catch (err) { toast(err.message); }
+async function onItemsAction(e) {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const { act, id } = el.dataset;
+  const items = state.settings.trackedItems;
+  switch (act) {
+    case 'pick': el.checked ? selected.add(id) : selected.delete(id); confirming = null; break;
+    case 'all': if (el.checked) items.forEach((i) => selected.add(i.id)); else selected.clear(); confirming = null; break;
+    case 'clear': selected.clear(); confirming = null; break;
+    case 'edit': fillItemForm(items.find((i) => i.id === id)); window.scrollTo({ top: 0, behavior: 'smooth' }); return;
+    case 'del': confirming = id; break;
+    case 'bulk': confirming = 'bulk'; break;
+    case 'cancel': confirming = null; break;
+    case 'del-yes':
+    case 'bulk-yes': {
+      const ids = act === 'bulk-yes' ? [...selected] : [id];
+      el.disabled = true;
+      try {
+        const s = await call('POST', '/api/items/delete', { ids });
+        ids.forEach((x) => selected.delete(x));
+        confirming = null;
+        setState(s);
+        toast(`Deleted ${ids.length} item${ids.length === 1 ? '' : 's'}`);
+      } catch (err) { el.disabled = false; toast(err.message); }
+      return;
+    }
+    default: return;
   }
+  renderItems();
+  const focus = $(confirming === 'bulk' ? '#items-toolbar [data-act="bulk-yes"]' : `#items [data-act="del-yes"]`);
+  if (focus && (act === 'del' || act === 'bulk')) focus.focus();
+}
+$('#items').addEventListener('click', onItemsAction);
+$('#items-toolbar').addEventListener('click', onItemsAction);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && confirming) { confirming = null; renderItems(); }
 });
 
 // ---- browse ----
@@ -239,10 +304,6 @@ $('#kassal-form').addEventListener('submit', async (e) => {
 });
 $('#kassal-clear').addEventListener('click', async () => {
   try { setState(await call('PUT', '/api/settings', { kassalKey: '' })); toast('Key removed'); } catch (err) { toast(err.message); }
-});
-
-$('#refresh').addEventListener('click', async () => {
-  try { await call('POST', '/api/refresh'); toast('Refreshing…'); setTimeout(load, 800); } catch (err) { toast(err.message); }
 });
 
 // ---- tabs ----

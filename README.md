@@ -26,13 +26,14 @@ Every dropped offer is listed under **Dropped offers** with its reason.
 - `*smør` matches words that *end with* it (meierismør, the usual Norwegian compound).
 - `tine *smør`: every word must appear, and at least one of them in the offer title.
 - Exclude words drop an offer if they appear anywhere in its title.
+- Spelling of æ/ø/å doesn't matter: `kjottdeig` matches KJØTTDEIG.
 
 Use **Browse offers** to try terms out. It uses the same matching rules.
 
 ## Data sources
 
-- **Tjek squid API** (`squid-api.tjek.com/v2`): the backend behind eTilbudsavis.no and Mattilbud.no. Public, location-based, at most 1000 results per query, so offers are fetched per shop. Refreshed every 6 h, or with the Refresh button.
-- **Kassalapp** (`kassal.app/api/v1`): optional, needs a free API key (Settings). Supplies per-chain shelf prices. The regular price is the most common price in the last 90 days, so a short campaign doesn't count as the regular price. Cached 12 h per tracked item.
+- **Tjek squid API** (`squid-api.tjek.com/v2`): the backend behind eTilbudsavis.no and Mattilbud.no. Public, location-based, at most 1000 results per query, so offers are fetched per shop. Flyers change on Sunday and run from Monday, so offers are fetched **once a week, Monday 01:00 Oslo time**, and kept for the rest of the week. There is no manual refresh. If the server was down at that time, it catches up once on start. Changing the location or adding a shop fetches only what's missing.
+- **Kassalapp** (`kassal.app/api/v1`): optional, needs a free API key (Settings). Supplies per-chain shelf prices. The regular price is the most common price in the last 90 days, so a short campaign doesn't count as the regular price. Looked up weekly with the offers, and right away for new or edited items. When an item's name matches a Kassalapp category (e.g. "Kjøttdeig"), only products in such categories count. That stops a pizza with kjøttdeig in its name from being treated as cheaper kjøttdeig.
 
 ## Layout
 
@@ -54,7 +55,7 @@ node --test test/*.test.js
 DATA_DIR=./data PORT=3913 node server.js     # http://localhost:3913
 ```
 
-Environment variables: `HOST` (default 127.0.0.1), `PORT` (default 3003), `DATA_DIR` (default ./data), and `DISABLE_FETCH=1` to skip calls to the external APIs (used in CI).
+Environment variables: `HOST` (default 127.0.0.1), `PORT` (default 3003), `DATA_DIR` (default ./data), and `FETCH_WEEKDAY` / `FETCH_HOUR` for the weekly fetch time (default 1 / 1 = Monday 01:00 Oslo), and `DISABLE_FETCH=1` to skip all calls to the external APIs (used in CI).
 
 ## Deployment (pull-based CD)
 

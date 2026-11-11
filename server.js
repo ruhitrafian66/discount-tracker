@@ -13,8 +13,10 @@ const PORT = Number(process.env.PORT || 3003);
 const HOST = process.env.HOST || '127.0.0.1';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const PUBLIC = path.join(__dirname, 'public');
-const OFFERS_TTL = 6 * 3600e3;
-const KASSAL_TTL = 12 * 3600e3;
+// Weekly fetch slot: FETCH_WEEKDAY (0=Sun, 1=Mon) at FETCH_HOUR:00 Oslo time. Default Monday 01:00.
+const FETCH_WEEKDAY = Number(process.env.FETCH_WEEKDAY || 1);
+const FETCH_HOUR = Number(process.env.FETCH_HOUR || 1);
+const slots = () => engine.fetchSlots(Date.now(), FETCH_WEEKDAY, FETCH_HOUR);
 
 // ---- persistence ----------------------------------------------------------
 
@@ -40,36 +42,42 @@ const settings = { ...DEFAULT_SETTINGS, ...load('settings.json', {}) };
 let offersCache = load('offers.json', { fetchedAt: 0, locKey: '', byDealer: {}, discovered: [], errors: [] });
 const kassalCache = load('kassal.json', {});
 const status = { refreshing: false, kassalRefreshing: false, kassalError: null };
+const failedAt = new Map();  // dealerId -> time of last failed fetch
 
 const locKey = (l) => `${l.lat.toFixed(4)},${l.lng.toFixed(4)},${l.radiusKm}`;
 
 // ---- refresh --------------------------------------------------------------
 
-async function refreshOffers({ force = false } = {}) {
+// Offers are fetched once per weekly slot (see engine.fetchSlots) and kept all week.
+// Outside the slot, the API is only called for data the cache cannot have:
+// a changed location, a newly selected shop, or a shop whose fetch failed (retried).
+async function refreshOffers() {
   if (status.refreshing) return;
   const lk = locKey(settings.location);
-  const stale = Date.now() - offersCache.fetchedAt > OFFERS_TTL || offersCache.locKey !== lk;
-  const missing = settings.shops.filter((id) => !offersCache.byDealer[id]);
-  if (!force && !stale && !missing.length) return;
+  const stale = offersCache.fetchedAt < slots().last || offersCache.locKey !== lk;
+  // Failed shops are retried at most hourly.
+  const missing = settings.shops.filter((id) => !offersCache.byDealer[id] && !(Date.now() - (failedAt.get(id) || 0) < 3600e3));
+  if (!stale && !missing.length) return;
 
   status.refreshing = true;
-  const toFetch = force || stale ? settings.shops : missing;
-  const byDealer = force || stale ? {} : { ...offersCache.byDealer };
+  const toFetch = stale ? settings.shops : missing;
+  const byDealer = stale ? {} : { ...offersCache.byDealer };
   const errors = [];
   try {
     for (const id of toFetch) {
       try {
         byDealer[id] = (await tjek.fetchDealerOffers(id, settings.location)).map(tjek.slim);
+        failedAt.delete(id);
       } catch (e) {
-        errors.push(`${dealerName(id)}: ${e.message}`);
-        if (offersCache.byDealer[id] && offersCache.locKey === lk) byDealer[id] = offersCache.byDealer[id];
+        errors.push(`${dealerName(id)}: ${e.message}`);  // left missing -> retried later
+        failedAt.set(id, Date.now());
       }
     }
     let discovered = offersCache.discovered;
-    if (force || stale || !discovered.length) {
+    if (stale || !discovered.length) {
       try { discovered = await tjek.discoverDealers(settings.location); } catch (e) { errors.push(`Shop discovery: ${e.message}`); }
     }
-    offersCache = { fetchedAt: Date.now(), locKey: lk, byDealer, discovered, errors };
+    offersCache = { fetchedAt: stale ? Date.now() : offersCache.fetchedAt, locKey: lk, byDealer, discovered, errors };
     await save('offers.json', offersCache);
     log(`offers refreshed: ${Object.values(byDealer).flat().length} offers from ${toFetch.length} shops${errors.length ? `, ${errors.length} errors` : ''}`);
   } finally {
@@ -77,17 +85,17 @@ async function refreshOffers({ force = false } = {}) {
   }
 }
 
-async function refreshKassal({ force = false } = {}) {
-  if (status.kassalRefreshing || !settings.kassalKey) return;
+async function refreshKassal() {
+  if (status.kassalRefreshing || !settings.kassalKey || process.env.DISABLE_FETCH) return;
   status.kassalRefreshing = true;
   status.kassalError = null;
   try {
     const offers = weekOffers();
     for (const item of [...settings.trackedItems]) {
       const terms = engine.searchTerms(item, offers);
-      const key = JSON.stringify(terms);
+      const key = JSON.stringify(['v2', terms]);  // bump when the cached product shape changes
       const c = kassalCache[item.id];
-      if (!force && c && c.termsKey === key && Date.now() - c.fetchedAt < KASSAL_TTL) continue;
+      if (c && c.termsKey === key && c.fetchedAt >= slots().last) continue;
       try {
         const products = await kassal.productsForTerms(settings.kassalKey, terms);
         kassalCache[item.id] = { fetchedAt: Date.now(), termsKey: key, products };
@@ -105,10 +113,10 @@ async function refreshKassal({ force = false } = {}) {
 }
 
 // Kassalapp runs after offers: its search spellings are learned from the offers.
-function refreshAll(opts) {
-  refreshOffers(opts)
+function refreshAll() {
+  refreshOffers()
     .catch((e) => log('offers refresh failed:', e.message))
-    .then(() => refreshKassal(opts))
+    .then(() => refreshKassal())
     .catch((e) => log('kassal refresh failed:', e.message));
 }
 
@@ -142,6 +150,7 @@ function stateView() {
     status: {
       ...status,
       fetchedAt: offersCache.fetchedAt,
+      nextFetch: slots().next,
       offerCount: offers.length,
       weekEnds: engine.endOfWeek(Date.now()),
       errors: offersCache.errors,
@@ -208,12 +217,6 @@ async function api(req, res, url) {
     return send(res, 200, { offers: hits });
   }
 
-  if (m === 'POST' && p === '/api/refresh') {
-    await readJson(req);
-    refreshAll({ force: true });
-    return send(res, 202, { ok: true });
-  }
-
   if (m === 'PUT' && p === '/api/settings') {
     const b = await readJson(req);
     if (b.location) {
@@ -242,6 +245,16 @@ async function api(req, res, url) {
     await save('settings.json', settings);
     refreshKassal().catch((e) => log(e.message));
     return send(res, 201, stateView());
+  }
+
+  // Bulk delete: { ids: [...] }
+  if (m === 'POST' && p === '/api/items/delete') {
+    const b = await readJson(req);
+    const ids = new Set(Array.isArray(b.ids) ? b.ids.map(String) : []);
+    if (!ids.size) throw httpError(400, 'No items selected');
+    settings.trackedItems = settings.trackedItems.filter((i) => !ids.has(i.id));
+    await save('settings.json', settings);
+    return send(res, 200, stateView());
   }
 
   const im = p.match(/^\/api\/items\/([\w-]+)$/);
@@ -288,8 +301,10 @@ function log(...a) { console.log(new Date().toISOString(), ...a); }
 if (require.main === module) {
   server.listen(PORT, HOST, () => log(`discount-tracker listening on http://${HOST}:${PORT}`));
   if (!process.env.DISABLE_FETCH) {  // set in CI to avoid calling external APIs
+    // Cheap local check; it only calls the APIs when the weekly slot has passed
+    // (or after downtime over the slot, or for a failed shop).
     refreshAll();
-    setInterval(() => refreshAll(), 30 * 60e3).unref();
+    setInterval(() => refreshAll(), 15 * 60e3).unref();
   }
 }
 

@@ -36,7 +36,13 @@ git push origin main                       # deploys: CI passes -> server pulls 
   - `pre_price` is present on only ~30% of grocery offers.
 - **Kassalapp** `https://kassal.app/api/v1` is optional (Bearer key, set in Settings), ~60 req/min. `/products?search=` (min 3 chars, size ≤ 100). The regular price is the most common price in `price_history` over 90 days. Chain names differ from Tjek's ("Coop Extra" vs "Extra"); `shopKey()` normalises them.
 
+## Fetch schedule
+
+Offers are fetched once per week (`engine.fetchSlots`, default Monday 01:00 Oslo time; `FETCH_WEEKDAY`/`FETCH_HOUR`) and cached all week. This is a user requirement: keep API load minimal, with no manual refresh button or TTL-based refetching. The 15-minute timer is only a local staleness check. The only off-schedule API calls are for a changed location, a newly selected shop, a failed shop (retried at most hourly), and Kassalapp lookups for new or edited items.
+
 ## Matching semantics
+
+Matching is accent-insensitive via `fold()` (ø→o, æ→ae, å→a). Kassalapp searches use the spelling seen in flyer headings (`searchTerms`), because Kassalapp search is spelling-exact. Kassalapp products are filtered by category when one matches the item (`relevantProducts`); otherwise dishes like "Grandiosa Pizza Kjøttdeig" pass as cheaper regular prices.
 
 A term word matches words that *start with* it; a leading `*` matches words that *end with* it (Norwegian compounds: `*smør` → meierismør). Plain substring matching was tried and rejected ("egg" hit "pålegg", "truseinnlegg"). All words of a term must appear, at least one in the title. Exclude words are a substring match on the title. Browse search uses the same `termMatches`.
 

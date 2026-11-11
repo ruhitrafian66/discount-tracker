@@ -112,6 +112,22 @@ test('Coop 2-for-110 kjøttdeig wins on unit price and is shown', () => {
   assert.equal(r.shops[0].items[0].unitPrice, 137.5);
 });
 
+test('a dish containing the item (pizza with kjøttdeig) is not a cheaper regular price', () => {
+  const coop = offer('Extra', 'Coop Kjøttdeig', 110, { size: 400, pieces: 2 });
+  const item = { id: 'k', name: 'kjottdeig', terms: ['kjottdeig'] };
+  const pizza = { ...kp('Meny', 'Grandiosa Pizza Kjøttdeig&Løk 520g', 47.34, 520), categories: ['Pizza', 'Pizza', 'Middag'] };
+  const mince = { ...kp('Meny', 'Gilde Kjøttdeig 14% 400g', 69.9, 400), categories: ['Kjøttdeig', 'Kjøtt'] };
+  const r = E.compute({ offers: [coop], trackedItems: [item], shopKeys: shops, kassal: { k: [pizza, mince] }, now: NOW });
+  assert.deepEqual(items(r.shops), [['Extra', 'Coop Kjøttdeig']]);
+  assert.match(r.shops[0].items[0].regular.source, /Meny/);
+
+  // A genuinely cheaper regular kjøttdeig elsewhere still drops the offer.
+  const cheap = { ...kp('KIWI', 'First Price Kjøttdeig 400g', 49.9, 400), categories: ['Kjøttdeig'] };
+  const r2 = E.compute({ offers: [coop], trackedItems: [item], shopKeys: shops, kassal: { k: [pizza, cheap] }, now: NOW });
+  assert.equal(r2.shops.length, 0);
+  assert.match(r2.dropped[0].reason, /KIWI is lower: 124,75\/kg \(First Price/);
+});
+
 test('pack counts are read from the text when the flyer says "1 pcs"', () => {
   const o = offer('X', 'COOP FROKOSTEGG 18 PK', 69.9, { size: 1, unit: 'pcs' });
   assert.deepEqual(E.offerAmount(o), { dim: 'stk', amount: 18 });
@@ -171,6 +187,27 @@ test('end of week is Sunday 23:59:59 Oslo time', () => {
   assert.equal(new Date(E.endOfWeek(NOW)).toISOString(), '2026-11-15T22:59:59.000Z');
   const sunday = Date.parse('2026-11-15T20:00:00Z');
   assert.equal(new Date(E.endOfWeek(sunday)).toISOString(), '2026-11-15T22:59:59.000Z');
+});
+
+test('weekly fetch slot is Monday 01:00 Oslo time, DST-aware', () => {
+  const iso = (t) => new Date(t).toISOString();
+  // Wed 11 Nov 2026 (CET, UTC+1): last = Mon 9 Nov 01:00 = 00:00Z, next = Mon 16 Nov.
+  let s = E.fetchSlots(NOW);
+  assert.equal(iso(s.last), '2026-11-09T00:00:00.000Z');
+  assert.equal(iso(s.next), '2026-11-16T00:00:00.000Z');
+  // Monday 00:30 Oslo is before the slot -> still last week's.
+  s = E.fetchSlots(Date.parse('2026-11-15T23:30:00Z'));
+  assert.equal(iso(s.last), '2026-11-09T00:00:00.000Z');
+  // Monday 01:00 Oslo exactly -> this week's slot.
+  s = E.fetchSlots(Date.parse('2026-11-16T00:00:00Z'));
+  assert.equal(iso(s.last), '2026-11-16T00:00:00.000Z');
+  // Summer time (CEST, UTC+2): Mon 15 Jun 2026 01:00 = 14 Jun 23:00Z.
+  s = E.fetchSlots(Date.parse('2026-06-17T12:00:00Z'));
+  assert.equal(iso(s.last), '2026-06-14T23:00:00.000Z');
+  // Across the DST change (29 Mar 2026): next slot after Mon 23 Mar is Mon 30 Mar 01:00 CEST.
+  s = E.fetchSlots(Date.parse('2026-03-25T12:00:00Z'));
+  assert.equal(iso(s.last), '2026-03-23T00:00:00.000Z');
+  assert.equal(iso(s.next), '2026-03-29T23:00:00.000Z');
 });
 
 test('shop keys line up across sources', () => {
