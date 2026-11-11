@@ -50,14 +50,15 @@ function setState(s) {
 // ---- status ----
 function renderStatus() {
   const st = state.status;
+  // Each part stays on one line; wrapping only happens between parts.
   const parts = [];
   if (st.refreshing) parts.push('Fetching offers…');
-  else if (st.fetchedAt) parts.push(`${st.offerCount} offers this week (fetched ${dateTime.format(new Date(st.fetchedAt))})`);
+  else if (st.fetchedAt) parts.push(`${st.offerCount} offers this week`, `fetched ${dateTime.format(new Date(st.fetchedAt))}`);
   else parts.push('No offers fetched yet');
   if (st.kassalRefreshing) parts.push('looking up regular prices…');
   parts.push(`next update ${dateTime.format(new Date(st.nextFetch))}`);
   parts.push(`${state.settings.location.name} +${state.settings.location.radiusKm} km`);
-  $('#status').textContent = parts.join(' · ');
+  $('#status').innerHTML = parts.map((p) => `<span class="nb">${esc(p)}</span>`).join('<span class="sep" aria-hidden="true"> · </span>');
 }
 
 // ---- deals ----
@@ -82,7 +83,7 @@ function renderDeals() {
 
   $('#dropped-count').textContent = result.dropped.length;
   $('#dropped').innerHTML = result.dropped.length
-    ? result.dropped.map((d) => `<div class="dropped-row"><b>${esc(d.heading)}</b> · ${esc(d.shop)} · ${kr(d.price)} <span class="chip">${esc(d.tracked)}</span><br><span class="muted">${esc(d.reason)}</span></div>`).join('')
+    ? result.dropped.map((d) => `<div class="dropped-row"><b>${esc(d.heading)}</b> · <span class="nb">${esc(d.shop)}</span> · <span class="nb">${kr(d.price)}</span> <span class="chip">${esc(d.tracked)}</span><br><span class="muted">${esc(d.reason)}</span></div>`).join('')
     : '<p class="muted small">Nothing dropped.</p>';
 }
 
@@ -98,25 +99,38 @@ function shopHtml(shop) {
   </details>`;
 }
 
+// Grid areas: image | title | prices, with the body below the title.
+// On phones the prices move into a single row under the title (see style.css).
 function dealHtml(i) {
   const starts = new Date(i.runFrom) > new Date();
+  const desc = i.description ? i.description.replace(/\s*\n\s*/g, ' · ') : '';
   return `<div class="deal">
-    ${i.image ? `<img src="${esc(i.image)}" alt="" loading="lazy">` : '<div></div>'}
-    <div>
-      <div class="title">${esc(i.heading)}</div>
-      ${i.description ? `<div class="desc">${esc(i.description)}</div>` : ''}
-      <div class="ref">Regular: <s>${kr(i.regular.price)}</s> <span class="muted">(${kr(i.regular.unitPrice)}/${esc(i.unit)})</span></div>
-      <div class="src">${esc(i.regular.source)}</div>
-      <div>${i.trackedItems.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}
-        <span class="when">${starts ? 'from ' + day.format(new Date(i.runFrom)) + ' · ' : ''}until ${day.format(new Date(i.runTill))}</span></div>
-    </div>
-    <div class="prices">
-      <div class="price">${kr(i.price)}</div>
-      <div class="unit">${kr(i.unitPrice)}/${esc(i.unit)}</div>
+    ${i.image ? `<img class="d-img" src="${esc(i.image)}" alt="" loading="lazy">` : '<div class="d-img"></div>'}
+    <div class="d-title">${esc(i.heading)}</div>
+    <div class="d-prices">
+      <span class="price">${kr(i.price)}</span>
+      <span class="unit">${kr(i.unitPrice)}/${esc(i.unit)}</span>
       <span class="save">−${i.savingsPct}%</span>
+    </div>
+    <div class="d-body">
+      ${desc ? `<div class="desc clamp" title="Tap to show all" role="button" tabindex="0">${esc(desc)}</div>` : ''}
+      <div class="ref"><span class="nb">Regular: <s>${kr(i.regular.price)}</s></span> <span class="nb muted">(${kr(i.regular.unitPrice)}/${esc(i.unit)})</span></div>
+      <div class="src">${esc(i.regular.source)}</div>
+      <div class="meta-row">${i.trackedItems.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}
+        <span class="when">${starts ? 'from ' + day.format(new Date(i.runFrom)) + ' · ' : ''}until ${day.format(new Date(i.runTill))}</span></div>
     </div>
   </div>`;
 }
+
+// Long flyer descriptions are clamped to two lines; tap/Enter toggles the rest.
+function toggleDesc(e) {
+  const d = e.target.closest('.desc');
+  if (!d || (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ')) return;
+  e.preventDefault();
+  d.classList.toggle('clamp');
+}
+$('#deals').addEventListener('click', toggleDesc);
+$('#deals').addEventListener('keydown', toggleDesc);
 
 // ---- tracked items ----
 // Selection for bulk actions, and which delete is awaiting in-page confirmation
@@ -161,7 +175,7 @@ function renderItems() {
     return `<div class="item-row${sel ? ' selected' : ''}">
       <input type="checkbox" class="pick" data-act="pick" data-id="${esc(it.id)}"${sel ? ' checked' : ''} aria-label="Select ${esc(it.name)}">
       <div class="grow">
-        <div><b>${esc(it.name)}</b> <span class="pill">${s.shown} shown / ${s.candidates} matched</span></div>
+        <div class="name-row"><b>${esc(it.name)}</b> <span class="pill">${s.shown} shown / ${s.candidates} matched</span></div>
         <div class="meta">Terms: ${it.terms.map(esc).join(', ')}${it.exclude.length ? ' · Excludes: ' + it.exclude.map(esc).join(', ') : ''}</div>
       </div>
       ${actions}
@@ -244,7 +258,7 @@ async function browse() {
       <div>
         <div class="title">${esc(o.heading)}</div>
         <div class="desc">${esc(o.description)}</div>
-        <div class="foot"><span><b>${kr(o.price)}</b> <span class="muted small">${esc(o.shop)}${o.prePrice ? ' · før ' + kr(o.prePrice) : ''}</span></span>
+        <div class="foot"><span><b class="nb">${kr(o.price)}</b> <span class="muted small"><span class="nb">${esc(o.shop)}</span>${o.prePrice ? ` · <span class="nb">før ${kr(o.prePrice)}</span>` : ''}</span></span>
           <button class="btn ghost small" data-track="${esc(o.heading)}">+ Track</button></div>
       </div></div>`).join('') : '<p class="muted">No offers match.</p>';
   } catch (err) { el.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }

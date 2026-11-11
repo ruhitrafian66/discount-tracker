@@ -45,7 +45,7 @@ h2 { font-size: 17px; margin: 0 0 8px; }
 .top p { margin: 2px 0 0; font-size: 13px; }
 .top .brand { min-width: 0; }
 .top .btn { flex: none; }
-main, .panel, .item-row .grow, .offer > div, .dropped-row { min-width: 0; overflow-wrap: anywhere; }
+main, .panel, .item-row .grow, .offer > div, .dropped-row { min-width: 0; overflow-wrap: break-word; }
 
 .tabs {
   display: flex; gap: 4px; overflow-x: auto; padding: 6px 16px; max-width: 1100px; margin: 0 auto;
@@ -98,21 +98,36 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 0;
 }
 .deal { display: grid; grid-template-columns: 64px 1fr auto; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
 .deal:first-child { border-top: 0; }
-.deal > * { min-width: 0; }
-.deal { overflow-wrap: anywhere; }
-.deal img { width: 64px; height: 64px; object-fit: contain; border-radius: 8px; background: #fff; }
-.deal .title { font-weight: 650; }
-.deal .desc { font-size: 13px; color: var(--muted); white-space: pre-line; overflow-wrap: anywhere; }
+/* Wrap rules: text breaks between words; units like "137,50 kr/kg" never split
+   (.nb); only very long unbroken strings (URLs, codes) break mid-word. */
+.nb { white-space: nowrap; }
+
+.deal {
+  display: grid; gap: 2px 12px; padding: 12px 0; border-top: 1px solid var(--line);
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  grid-template-areas: "img title prices" "img body prices";
+  align-items: start;
+}
+.deal:first-child { border-top: 0; }
+.deal .d-img { grid-area: img; width: 64px; height: 64px; object-fit: contain; border-radius: 8px; background: #fff; }
+.deal .d-title { grid-area: title; font-weight: 650; overflow-wrap: break-word; }
+.deal .d-body { grid-area: body; min-width: 0; overflow-wrap: break-word; }
+.deal .d-prices { grid-area: prices; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; white-space: nowrap; }
+.deal .desc { font-size: 13px; color: var(--muted); cursor: pointer; }
+.deal .desc.clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .deal .ref { font-size: 13px; margin-top: 4px; }
 .deal .ref s { color: var(--muted); }
 .deal .src { font-size: 12px; color: var(--muted); }
-.deal .prices { text-align: right; white-space: nowrap; }
 .deal .price { font-size: 18px; font-weight: 750; }
 .deal .unit { font-size: 12px; color: var(--muted); }
-.save { display: inline-block; font-size: 12px; font-weight: 700; color: var(--save); background: var(--save-bg); padding: 1px 7px; border-radius: 99px; margin-top: 4px; }
-.chip { display: inline-block; font-size: 12px; background: var(--chip); color: var(--accent); padding: 1px 8px; border-radius: 99px; margin: 4px 4px 0 0; font-weight: 600; }
-.pill { font-size: 12px; background: var(--line); padding: 1px 8px; border-radius: 99px; margin-left: 4px; }
-.when { font-size: 12px; color: var(--muted); }
+.meta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 4px; }
+.save { display: inline-block; font-size: 12px; font-weight: 700; color: var(--save); background: var(--save-bg); padding: 1px 7px; border-radius: 99px; white-space: nowrap; }
+.chip { display: inline-block; font-size: 12px; background: var(--chip); color: var(--accent); padding: 1px 8px; border-radius: 99px; font-weight: 600; white-space: nowrap; }
+.dropped-row .chip { margin-top: 4px; }
+.pill { display: inline-block; font-size: 12px; background: var(--line); padding: 1px 8px; border-radius: 99px; white-space: nowrap; }
+.when { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+.name-row b { overflow-wrap: anywhere; }
 
 .empty { text-align: center; padding: 30px 16px; color: var(--muted); }
 
@@ -142,7 +157,9 @@ details.panel > summary { cursor: pointer; font-weight: 650; }
 .offer img { width: 56px; height: 56px; object-fit: contain; border-radius: 6px; background: #fff; }
 .offer .title { font-weight: 650; font-size: 14px; }
 .offer .desc { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.offer .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; gap: 6px; }
+.offer .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; gap: 8px; }
+.offer .foot > span { min-width: 0; }
+.offer .foot .btn, .item-row .btn, .toolbar .btn { white-space: nowrap; flex: none; }
 
 .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px; margin: 8px 0 12px; }
 .checks label { display: flex; align-items: center; gap: 8px; font-weight: 500; margin: 0; }
@@ -155,7 +172,15 @@ details.panel > summary { cursor: pointer; font-weight: 650; }
 }
 
 @media (max-width: 520px) {
-  .deal { grid-template-columns: 52px 1fr; }
-  .deal img { width: 52px; height: 52px; }
-  .deal .prices { grid-column: 2; text-align: left; }
+  /* Price goes in one row right under the title instead of a narrow column. */
+  .deal { grid-template-columns: 52px minmax(0, 1fr); grid-template-areas: "img title" "img prices" "img body"; }
+  .deal .d-img { width: 52px; height: 52px; }
+  .deal .d-prices { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+  .shop > summary { flex-wrap: wrap; row-gap: 2px; }
+  .shop .total { flex-basis: 100%; text-align: left; padding-left: 46px; }
+  /* Four tabs must fit at 360px without scrolling. */
+  .tabs { gap: 2px; padding: 6px 12px; }
+  .tabs button { padding: 7px 8px; font-size: 14px; flex: 1 1 auto; }
+  .item-row { flex-wrap: wrap; }
+  .item-row .grow { flex: 1 1 160px; }
 }
