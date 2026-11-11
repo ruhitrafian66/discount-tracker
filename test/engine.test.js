@@ -210,6 +210,14 @@ test('weekly fetch slot is Monday 01:00 Oslo time, DST-aware', () => {
   assert.equal(iso(s.next), '2026-03-29T23:00:00.000Z');
 });
 
+test('a shown deal carries its flyer link (null when the offer has none)', () => {
+  const linked = { ...offer('KIWI', 'Smør', 39.9, { pre: 59.9 }), url: 'https://etilbudsavis.no/KIWI?offer=x' };
+  let r = E.compute({ offers: [linked], trackedItems: [smor], shopKeys: shops, now: NOW });
+  assert.equal(r.shops[0].items[0].url, 'https://etilbudsavis.no/KIWI?offer=x');
+  r = E.compute({ offers: [offer('KIWI', 'Smør', 39.9, { pre: 59.9 })], trackedItems: [smor], shopKeys: shops, now: NOW });
+  assert.equal(r.shops[0].items[0].url, null);
+});
+
 test('shop keys line up across sources', () => {
   assert.equal(E.shopKey('Coop Extra'), E.shopKey('Extra'));
   assert.equal(E.shopKey('Coop Obs'), E.shopKey('Obs'));

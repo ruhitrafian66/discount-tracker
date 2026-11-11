@@ -39,6 +39,9 @@ const DEFAULT_SETTINGS = {
   trackedItems: [],
 };
 const settings = { ...DEFAULT_SETTINGS, ...load('settings.json', {}) };
+// Bump when the stored offer shape changes (tjek.slim): the cache is then rebuilt
+// once, off-schedule. v2 added `url`.
+const OFFERS_CACHE_V = 2;
 let offersCache = load('offers.json', { fetchedAt: 0, locKey: '', byDealer: {}, discovered: [], errors: [] });
 const kassalCache = load('kassal.json', {});
 const status = { refreshing: false, kassalRefreshing: false, kassalError: null };
@@ -54,7 +57,7 @@ const locKey = (l) => `${l.lat.toFixed(4)},${l.lng.toFixed(4)},${l.radiusKm}`;
 async function refreshOffers() {
   if (status.refreshing) return;
   const lk = locKey(settings.location);
-  const stale = offersCache.fetchedAt < slots().last || offersCache.locKey !== lk;
+  const stale = offersCache.fetchedAt < slots().last || offersCache.locKey !== lk || offersCache.v !== OFFERS_CACHE_V;
   // Failed shops are retried at most hourly.
   const missing = settings.shops.filter((id) => !offersCache.byDealer[id] && !(Date.now() - (failedAt.get(id) || 0) < 3600e3));
   if (!stale && !missing.length) return;
@@ -77,7 +80,7 @@ async function refreshOffers() {
     if (stale || !discovered.length) {
       try { discovered = await tjek.discoverDealers(settings.location); } catch (e) { errors.push(`Shop discovery: ${e.message}`); }
     }
-    offersCache = { fetchedAt: stale ? Date.now() : offersCache.fetchedAt, locKey: lk, byDealer, discovered, errors };
+    offersCache = { v: OFFERS_CACHE_V, fetchedAt: stale ? Date.now() : offersCache.fetchedAt, locKey: lk, byDealer, discovered, errors };
     await save('offers.json', offersCache);
     log(`offers refreshed: ${Object.values(byDealer).flat().length} offers from ${toFetch.length} shops${errors.length ? `, ${errors.length} errors` : ''}`);
   } finally {

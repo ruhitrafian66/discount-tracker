@@ -116,21 +116,38 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 0;
 }
 .d-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 .d-title { grid-area: title; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.d-title::before { content: "›"; display: inline-block; width: 14px; color: var(--muted); transition: transform .15s; }
-.deal.open .d-title { white-space: normal; overflow-wrap: break-word; }
-.deal.open .d-title::before { transform: rotate(90deg); }
 .d-price { grid-area: price; font-size: 16px; font-weight: 750; white-space: nowrap; text-align: right; }
-.d-sub { grid-area: sub; display: flex; flex-wrap: wrap; gap: 0 10px; padding-left: 14px; font-size: 12.5px; color: var(--muted); }
+.d-sub { grid-area: sub; display: flex; flex-wrap: wrap; gap: 0 10px; font-size: 12.5px; color: var(--muted); }
 .d-head .save { grid-area: save; justify-self: end; }
+@media (hover: hover) { .d-head:hover .d-title { text-decoration: underline; text-underline-offset: 3px; } }
 
-.d-detail { display: flex; gap: 12px; padding: 2px 0 12px 14px; }
-.d-detail[hidden] { display: none; }
-.d-detail .d-img { width: 72px; height: 72px; flex: none; object-fit: contain; border-radius: 8px; background: #fff; }
-.d-detail .d-body { min-width: 0; overflow-wrap: break-word; }
-.deal .desc { font-size: 13px; color: var(--muted); }
-.deal .ref { font-size: 13px; margin-top: 4px; }
-.deal .src { font-size: 12px; color: var(--muted); }
-@media (prefers-reduced-motion: reduce) { .d-title::before { transition: none; } }
+/* Deal popup */
+.deal-dialog {
+  width: min(520px, calc(100% - 24px)); max-height: min(88vh, 760px);
+  padding: 0; border: 1px solid var(--line); border-radius: 16px;
+  background: var(--card); color: var(--text); overflow: hidden;
+  box-shadow: 0 20px 60px rgb(0 0 0 / .35);
+}
+.deal-dialog[open] { display: flex; flex-direction: column; }
+.deal-dialog::backdrop { background: rgb(0 0 0 / .55); }
+.dd-top { display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 16px; border-bottom: 1px solid var(--line); }
+.dd-top .logo { width: 32px; height: 32px; border-radius: 8px; object-fit: contain; background: #fff; flex: none; }
+.dd-shop { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: break-word; }
+.dd-close { flex: none; width: 36px; height: 36px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: 16px; cursor: pointer; }
+.dd-close:hover { background: var(--line); color: var(--text); }
+.dd-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; overflow-wrap: break-word; }
+.dd-img { display: block; width: 100%; max-height: 220px; object-fit: contain; border-radius: 10px; background: #fff; margin-bottom: 14px; }
+.dd-scroll h2 { font-size: 19px; margin: 0 0 6px; }
+.dd-price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 14px; }
+.dd-price .price { font-size: 26px; font-weight: 750; white-space: nowrap; }
+.dd-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 16px; margin: 0 0 14px; font-size: 14px; }
+.dd-facts dt { color: var(--muted); white-space: nowrap; }
+.dd-facts dd { margin: 0; min-width: 0; }
+.dd-facts .src { font-size: 12px; color: var(--muted); }
+.dd-desc { margin: 0; padding-top: 12px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--muted); white-space: pre-line; }
+.dd-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--line); }
+.dd-actions .btn { text-decoration: none; white-space: nowrap; }
+.dd-actions a.btn { flex: 1 1 auto; text-align: center; }
 .meta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 4px; }
 .save { display: inline-block; font-size: 12px; font-weight: 700; color: var(--save); background: var(--save-bg); padding: 1px 7px; border-radius: 99px; white-space: nowrap; }
 .chip { display: inline-block; font-size: 12px; background: var(--chip); color: var(--accent); padding: 1px 8px; border-radius: 99px; font-weight: 600; white-space: nowrap; }
@@ -183,7 +200,6 @@ details.panel > summary { cursor: pointer; font-weight: 650; }
 }
 
 @media (max-width: 520px) {
-  .d-detail .d-img { width: 56px; height: 56px; }
   .shop > summary { flex-wrap: wrap; row-gap: 2px; }
   .shop .total { flex-basis: 100%; text-align: left; padding-left: 46px; }
   /* Four tabs must fit at 360px without scrolling. */

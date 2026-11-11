@@ -20,6 +20,8 @@ For each tracked item, the app collects matching offers from your selected shops
 
 Every dropped offer is listed under **Dropped offers** with its reason.
 
+The Deals page lists each deal as a compact row. Tapping one opens a popup with the image, flyer text, the regular price and where it comes from, and a **View in flyer** link to the offer on eTilbudsavis.
+
 ## Match terms
 
 - `kylling` matches words that *start with* it (kyllingfilet).

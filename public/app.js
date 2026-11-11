@@ -75,9 +75,8 @@ function renderDeals() {
     el.innerHTML = `<div class="deals-bar">
         <span><span class="nb"><b>${count}</b> deal${count === 1 ? '' : 's'} in ${result.shops.length} shop${result.shops.length === 1 ? '' : 's'}</span>
           <span class="nb muted">· save up to ${kr(saved)}</span></span>
-        <button id="expand-all" class="btn ghost small" type="button">Expand all</button>
+        <span class="muted small nb">Tap a deal for details</span>
       </div>` + result.shops.map(shopHtml).join('');
-    syncExpandAll();
   }
 
   const missing = result.summary.filter((s) => s.candidates === 0).map((s) => s.name);
@@ -106,20 +105,15 @@ function shopHtml(shop) {
   </details>`;
 }
 
-// Compact by default: each deal is a two-line row (name, price, discount, regular
-// price, unit price, end date). Tapping the row opens the details: image, flyer
-// text, where the regular price comes from, and the tracked item it matched.
-// Which rows are open survives re-renders.
-const openDeals = new Set();
+// Each deal is a compact two-line row (name, price, discount, regular price,
+// unit price, end date). Tapping it opens the deal in a popup with the image,
+// flyer text, regular-price source, tracked item and a link to the flyer.
 const dealKey = (shop, i) => `${shop.key}:${i.id}`;
 
 function dealHtml(shop, i) {
-  const key = dealKey(shop, i);
-  const open = openDeals.has(key);
   const starts = new Date(i.runFrom) > new Date();
-  const desc = i.description ? i.description.replace(/\s*\n\s*/g, ' · ') : '';
-  return `<div class="deal${open ? ' open' : ''}" data-key="${esc(key)}">
-    <button class="d-head" type="button" aria-expanded="${open}">
+  return `<div class="deal">
+    <button class="d-head" type="button" aria-haspopup="dialog" data-key="${esc(dealKey(shop, i))}">
       <span class="d-title">${esc(i.heading)}</span>
       <span class="d-price">${kr(i.price)}</span>
       <span class="d-sub">
@@ -129,46 +123,69 @@ function dealHtml(shop, i) {
       </span>
       <span class="save">−${i.savingsPct}%</span>
     </button>
-    <div class="d-detail"${open ? '' : ' hidden'}>
-      ${i.image ? `<img class="d-img" src="${esc(i.image)}" alt="" loading="lazy">` : ''}
-      <div class="d-body">
-        ${desc ? `<div class="desc">${esc(desc)}</div>` : ''}
-        <div class="ref"><span class="nb">Regular price: ${kr(i.regular.price)}</span> <span class="nb muted">(${kr(i.regular.unitPrice)}/${esc(i.unit)})</span></div>
-        <div class="src">${esc(i.regular.source)}</div>
-        <div class="meta-row"><span class="muted small">Tracked as</span>${i.trackedItems.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}</div>
-      </div>
-    </div>
   </div>`;
 }
 
-function setDealOpen(el, open) {
-  el.classList.toggle('open', open);
-  el.querySelector('.d-head').setAttribute('aria-expanded', String(open));
-  el.querySelector('.d-detail').hidden = !open;
-  open ? openDeals.add(el.dataset.key) : openDeals.delete(el.dataset.key);
+function findDeal(key) {
+  for (const shop of state.result.shops) {
+    for (const i of shop.items) if (dealKey(shop, i) === key) return { shop, i };
+  }
+  return null;
 }
-function syncExpandAll() {
-  const btn = $('#expand-all');
-  if (!btn) return;
-  const all = document.querySelectorAll('#deals .deal');
-  const allOpen = all.length > 0 && [...all].every((d) => d.classList.contains('open'));
-  btn.textContent = allOpen ? 'Collapse all' : 'Expand all';
-  btn.dataset.open = String(allOpen);
+
+// Links come from our own server, but they end up in an href: only allow https.
+const safeUrl = (u) => (typeof u === 'string' && /^https:\/\//.test(u) ? u : null);
+
+function openDeal(key) {
+  const found = findDeal(key);
+  if (!found) return;
+  const { shop, i } = found;
+  const url = safeUrl(i.url);
+  const dlg = $('#deal-dialog');
+  dlg.innerHTML = `
+    <div class="dd-top">
+      ${shop.logo ? `<img class="logo" src="${esc(shop.logo)}" alt="">` : ''}
+      <span class="dd-shop">${esc(shop.name)}</span>
+      <button class="dd-close" type="button" data-close aria-label="Close">✕</button>
+    </div>
+    <div class="dd-scroll">
+      ${i.image ? `<img class="dd-img" src="${esc(i.image)}" alt="">` : ''}
+      <h2 id="dd-title">${esc(i.heading)}</h2>
+      <div class="dd-price">
+        <span class="price">${kr(i.price)}</span>
+        <span class="save">−${i.savingsPct}%</span>
+        <span class="nb muted">${kr(i.unitPrice)}/${esc(i.unit)}</span>
+      </div>
+      <dl class="dd-facts">
+        <dt>Regular price</dt>
+        <dd><span class="nb">${kr(i.regular.price)}</span> <span class="nb muted">(${kr(i.regular.unitPrice)}/${esc(i.unit)})</span>
+          <div class="src">${esc(i.regular.source)}</div></dd>
+        <dt>You save</dt>
+        <dd class="nb">${kr(i.regular.price - i.price)}</dd>
+        <dt>Valid</dt>
+        <dd class="nb">${day.format(new Date(i.runFrom))} – ${day.format(new Date(i.runTill))}</dd>
+        <dt>Tracked as</dt>
+        <dd>${i.trackedItems.map((t) => `<span class="chip">${esc(t)}</span>`).join(' ')}</dd>
+      </dl>
+      ${i.description ? `<p class="dd-desc">${esc(i.description)}</p>` : ''}
+    </div>
+    <div class="dd-actions">
+      ${url
+        ? `<a class="btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer">View in flyer ↗</a>`
+        : '<span class="muted small">No flyer link for this offer.</span>'}
+      <button class="btn ghost" type="button" data-close>Close</button>
+    </div>`;
+  if (!dlg.open) dlg.showModal();
+  dlg.querySelector('.dd-scroll').scrollTop = 0;
 }
+
 $('#deals').addEventListener('click', (e) => {
   const head = e.target.closest('.d-head');
-  if (head) {
-    const deal = head.parentElement;
-    setDealOpen(deal, !deal.classList.contains('open'));
-    return syncExpandAll();
-  }
-  const btn = e.target.closest('#expand-all');
-  if (btn) {
-    const open = btn.dataset.open !== 'true';
-    document.querySelectorAll('#deals .deal').forEach((d) => setDealOpen(d, open));
-    if (open) document.querySelectorAll('#deals details.shop').forEach((s) => { s.open = true; });
-    syncExpandAll();
-  }
+  if (head) openDeal(head.dataset.key);
+});
+// Close on the buttons or a click on the backdrop (the dialog element itself). Esc is built in.
+$('#deal-dialog').addEventListener('click', (e) => {
+  if (e.target.closest('[data-close]') || e.target === e.currentTarget) e.currentTarget.close();
 });
 
 // ---- tracked items ----
