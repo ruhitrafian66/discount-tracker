@@ -1,0 +1,30 @@
+[Unit]
+Description=Tilbud Tracker (Norwegian grocery discount tracker)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/discount-tracker
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+# Host-specific settings (HOST, PORT, DATA_DIR) live on the server only. See deploy/env.example.
+EnvironmentFile=/etc/discount-tracker/env
+
+# Unprivileged throwaway user; state lives in /var/lib/discount-tracker.
+DynamicUser=yes
+StateDirectory=discount-tracker
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+MemoryMax=200M
+
+[Install]
+WantedBy=multi-user.target

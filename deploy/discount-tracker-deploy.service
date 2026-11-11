@@ -1,0 +1,13 @@
+[Unit]
+Description=Pull and deploy Tilbud Tracker from GitHub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/discount-tracker-deploy
+# Root is needed to restart the app and update its units; keep the rest locked down.
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+TimeoutStartSec=10min

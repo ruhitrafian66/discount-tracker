@@ -1,0 +1,8 @@
+data/
+node_modules/
+*.tmp
+.DS_Store
+# machine-specific notes (server details); never commit
+CLAUDE.local.md
+.env
+*.env

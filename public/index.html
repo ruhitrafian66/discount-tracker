@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tilbud Tracker</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏷️</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1>Tilbud Tracker</h1>
+      <p id="status" class="muted">Loading…</p>
+    </div>
+    <button id="refresh" class="btn ghost" title="Fetch offers again">↻ Refresh</button>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-view="deals" aria-selected="true">Deals</button>
+    <button role="tab" data-view="items">Tracked items</button>
+    <button role="tab" data-view="browse">Browse offers</button>
+    <button role="tab" data-view="settings">Settings</button>
+  </nav>
+
+  <main>
+    <section id="view-deals" class="view">
+      <div id="deals"></div>
+      <details id="dropped-wrap" class="panel">
+        <summary>Dropped offers <span id="dropped-count" class="pill"></span></summary>
+        <p class="muted small">Offers that matched a tracked item but were left out, and why. If something's in here by mistake, add an exclude word or make the match terms more specific.</p>
+        <div id="dropped"></div>
+      </details>
+    </section>
+
+    <section id="view-items" class="view" hidden>
+      <form id="item-form" class="panel form">
+        <h2 id="item-form-title">Track an item</h2>
+        <input type="hidden" name="id">
+        <label>Name <input name="name" required maxlength="60" placeholder="e.g. Smør"></label>
+        <label>Match terms <span class="muted small">Comma-separated; an offer matches if any term does. Words in one term must all appear. A word matches the start of a word ("kylling" → kyllingfilet). A leading * matches the end of a word ("*smør" → meierismør).</span>
+          <input name="terms" placeholder="e.g. smør, *smør"></label>
+        <label>Exclude words <span class="muted small">comma-separated; drops offers with these in the title</span>
+          <input name="exclude" placeholder="e.g. kryddersmør, peanøtt, smørbrød"></label>
+        <div class="row">
+          <button class="btn" type="submit">Save</button>
+          <button class="btn ghost" type="button" id="item-cancel" hidden>Cancel</button>
+        </div>
+      </form>
+      <div id="items"></div>
+    </section>
+
+    <section id="view-browse" class="view" hidden>
+      <div class="panel">
+        <input id="q" type="search" placeholder="Search this week's offers in your shops…" autocomplete="off">
+        <p class="muted small">Use this to find good match terms. <b>+ Track</b> creates a tracked item from an offer.</p>
+      </div>
+      <div id="browse" class="grid"></div>
+    </section>
+
+    <section id="view-settings" class="view" hidden>
+      <form id="loc-form" class="panel form">
+        <h2>Location</h2>
+        <p class="muted small">Offers are fetched for shops within the radius of this point.</p>
+        <label>City <select name="preset"></select></label>
+        <div class="row">
+          <label>Latitude <input name="lat" type="number" step="0.0001" required></label>
+          <label>Longitude <input name="lng" type="number" step="0.0001" required></label>
+          <label>Radius (km) <input name="radiusKm" type="number" min="1" max="100" required></label>
+        </div>
+        <button class="btn" type="submit">Save location</button>
+      </form>
+
+      <form id="shops-form" class="panel form">
+        <h2>Shops</h2>
+        <p class="muted small">Only these shops are compared: both for discounts and for "another shop's regular price is cheaper".</p>
+        <div id="shops" class="checks"></div>
+        <button class="btn" type="submit">Save shops</button>
+      </form>
+
+      <form id="kassal-form" class="panel form">
+        <h2>Regular prices (Kassalapp)</h2>
+        <p class="muted small">Flyers only show a regular price on about 30% of offers. With a free <a href="https://kassal.app/api" target="_blank" rel="noopener">Kassalapp API key</a>, the app also looks up each chain's shelf price. That gives more offers a reference price, and lets the app drop "deals" that are dearer than another shop's normal price.</p>
+        <p id="kassal-state" class="small"></p>
+        <label>API key <input name="key" type="password" autocomplete="off" placeholder="Paste key to set or replace"></label>
+        <div class="row">
+          <button class="btn" type="submit">Save key</button>
+          <button class="btn ghost" type="button" id="kassal-clear">Remove key</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <div id="toast" role="status" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
