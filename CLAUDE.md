@@ -19,6 +19,7 @@ git push origin main                       # deploys: CI passes -> server pulls 
 - Offer text comes from external APIs. In `public/app.js`, always pass it through `esc()` before putting it in `innerHTML`. Links go through `safeUrl()` (https only).
 - Write endpoints require `Content-Type: application/json` and a same-origin `Origin` (CSRF guard; the app has no auth). Keep that for any new mutating route.
 - Never return the Kassalapp key to the client; the API only exposes `kassalKeySet`.
+- One popup shows every offer: `showOffer()` in `public/app.js`, used by Deals, Dropped offers and Browse. Offers that are not shown deals get their display shape from `engine.describeOffer()` (dropped entries and `/api/offers`). Add a field in both places, not per list.
 
 ## The user's rules (do not weaken)
 

@@ -89,7 +89,7 @@ function renderDeals() {
 
   $('#dropped-count').textContent = result.dropped.length;
   $('#dropped').innerHTML = result.dropped.length
-    ? result.dropped.map((d) => `<div class="dropped-row"><b>${esc(d.heading)}</b> · <span class="nb">${esc(d.shop)}</span> · <span class="nb">${kr(d.price)}</span> <span class="chip">${esc(d.tracked)}</span><br><span class="muted">${esc(d.reason)}</span></div>`).join('')
+    ? result.dropped.map((d, n) => `<button class="dropped-row" type="button" aria-haspopup="dialog" data-drop="${n}"><b>${esc(d.heading)}</b> · <span class="nb">${esc(d.shop)}</span> · <span class="nb">${kr(d.price)}</span> <span class="chip">${esc(d.tracked)}</span><br><span class="muted">${esc(d.reason)}</span></button>`).join('')
     : '<p class="muted small">Nothing dropped.</p>';
 }
 
@@ -128,7 +128,7 @@ function dealHtml(shop, i) {
 
 function findDeal(key) {
   for (const shop of state.result.shops) {
-    for (const i of shop.items) if (dealKey(shop, i) === key) return { shop, i };
+    for (const i of shop.items) if (dealKey(shop, i) === key) return { ...i, shop: shop.name, logo: shop.logo };
   }
   return null;
 }
@@ -136,43 +136,49 @@ function findDeal(key) {
 // Links come from our own server, but they end up in an href: only allow https.
 const safeUrl = (u) => (typeof u === 'string' && /^https:\/\//.test(u) ? u : null);
 
-function openDeal(key) {
-  const found = findDeal(key);
-  if (!found) return;
-  const { shop, i } = found;
-  const url = safeUrl(i.url);
+// One popup for every offer in the app: a shown deal, a dropped offer, a browse result.
+//   o       the offer (shop, logo, heading, image, price, unitPrice, unit, regular|null, runFrom, runTill, description, url)
+//   tracked names of the tracked items it matched (deals, dropped)
+//   reason  why it is not shown on the Deals page (dropped)
+//   track   heading to start tracking from (browse)
+function showOffer(o, { tracked = [], reason = '', track = '' } = {}) {
+  const url = safeUrl(o.url);
+  const reg = o.regular;
+  const saves = reg && reg.price > o.price;
   const dlg = $('#deal-dialog');
   dlg.innerHTML = `
     <div class="dd-top">
-      ${shop.logo ? `<img class="logo" src="${esc(shop.logo)}" alt="">` : ''}
-      <span class="dd-shop">${esc(shop.name)}</span>
+      ${o.logo ? `<img class="logo" src="${esc(o.logo)}" alt="">` : ''}
+      <span class="dd-shop">${esc(o.shop)}</span>
       <button class="dd-close" type="button" data-close aria-label="Close">✕</button>
     </div>
     <div class="dd-scroll">
-      ${i.image ? `<img class="dd-img" src="${esc(i.image)}" alt="">` : ''}
-      <h2 id="dd-title">${esc(i.heading)}</h2>
+      ${reason ? `<div class="dd-reason"><b>Not shown in Deals.</b> ${esc(reason)}</div>` : ''}
+      ${o.image ? `<img class="dd-img" src="${esc(o.image)}" alt="">` : ''}
+      <h2 id="dd-title">${esc(o.heading)}</h2>
       <div class="dd-price">
-        <span class="price">${kr(i.price)}</span>
-        <span class="save">−${i.savingsPct}%</span>
-        <span class="nb muted">${kr(i.unitPrice)}/${esc(i.unit)}</span>
+        <span class="price">${kr(o.price)}</span>
+        ${saves ? `<span class="save">−${Math.round((1 - o.price / reg.price) * 100)}%</span>` : ''}
+        <span class="nb muted">${kr(o.unitPrice)}/${esc(o.unit)}</span>
       </div>
       <dl class="dd-facts">
         <dt>Regular price</dt>
-        <dd><span class="nb">${kr(i.regular.price)}</span> <span class="nb muted">(${kr(i.regular.unitPrice)}/${esc(i.unit)})</span>
-          <div class="src">${esc(i.regular.source)}</div></dd>
-        <dt>You save</dt>
-        <dd class="nb">${kr(i.regular.price - i.price)}</dd>
+        <dd>${reg
+          ? `<span class="nb">${kr(reg.price)}</span> <span class="nb muted">(${kr(reg.unitPrice)}/${esc(o.unit)})</span>
+             <div class="src">${esc(reg.source)}</div>`
+          : '<span class="muted">Not given in the flyer</span>'}</dd>
+        ${saves ? `<dt>You save</dt><dd class="nb">${kr(reg.price - o.price)}</dd>` : ''}
         <dt>Valid</dt>
-        <dd class="nb">${day.format(new Date(i.runFrom))} – ${day.format(new Date(i.runTill))}</dd>
-        <dt>Tracked as</dt>
-        <dd>${i.trackedItems.map((t) => `<span class="chip">${esc(t)}</span>`).join(' ')}</dd>
+        <dd class="nb">${day.format(new Date(o.runFrom))} – ${day.format(new Date(o.runTill))}</dd>
+        ${tracked.length ? `<dt>Tracked as</dt><dd>${tracked.map((t) => `<span class="chip">${esc(t)}</span>`).join(' ')}</dd>` : ''}
       </dl>
-      ${i.description ? `<p class="dd-desc">${esc(i.description)}</p>` : ''}
+      ${o.description ? `<p class="dd-desc">${esc(o.description)}</p>` : ''}
     </div>
     <div class="dd-actions">
       ${url
         ? `<a class="btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer">View in flyer ↗</a>`
         : '<span class="muted small">No flyer link for this offer.</span>'}
+      ${track ? `<button class="btn ghost" type="button" data-track="${esc(track)}">+ Track</button>` : ''}
       <button class="btn ghost" type="button" data-close>Close</button>
     </div>`;
   if (!dlg.open) dlg.showModal();
@@ -181,10 +187,19 @@ function openDeal(key) {
 
 $('#deals').addEventListener('click', (e) => {
   const head = e.target.closest('.d-head');
-  if (head) openDeal(head.dataset.key);
+  if (!head) return;
+  const deal = findDeal(head.dataset.key);
+  if (deal) showOffer(deal, { tracked: deal.trackedItems });
+});
+$('#dropped').addEventListener('click', (e) => {
+  const row = e.target.closest('[data-drop]');
+  const d = row && state.result.dropped[Number(row.dataset.drop)];
+  if (d) showOffer(d, { tracked: [d.tracked], reason: d.reason });
 });
 // Close on the buttons or a click on the backdrop (the dialog element itself). Esc is built in.
 $('#deal-dialog').addEventListener('click', (e) => {
+  const track = e.target.closest('[data-track]');
+  if (track) { e.currentTarget.close(); return startTracking(track.dataset.track); }
   if (e.target.closest('[data-close]') || e.target === e.currentTarget) e.currentTarget.close();
 });
 
@@ -304,28 +319,35 @@ document.addEventListener('keydown', (e) => {
 // ---- browse ----
 let browseTimer;
 $('#q').addEventListener('input', () => { clearTimeout(browseTimer); browseTimer = setTimeout(browse, 250); });
+let browseOffers = [];
 async function browse() {
   const q = $('#q').value.trim();
   const el = $('#browse');
   try {
-    const { offers } = await call('GET', '/api/offers?q=' + encodeURIComponent(q));
-    el.innerHTML = offers.length ? offers.map((o) => `<div class="offer">
+    browseOffers = (await call('GET', '/api/offers?q=' + encodeURIComponent(q))).offers;
+    el.innerHTML = browseOffers.length ? browseOffers.map((o, n) => `<div class="offer" data-offer="${n}">
       ${o.image ? `<img src="${esc(o.image)}" alt="" loading="lazy">` : '<div></div>'}
       <div>
-        <div class="title">${esc(o.heading)}</div>
+        <button class="title" type="button" aria-haspopup="dialog">${esc(o.heading)}</button>
         <div class="desc">${esc(o.description)}</div>
-        <div class="foot"><span><b class="nb">${kr(o.price)}</b> <span class="muted small"><span class="nb">${esc(o.shop)}</span>${o.prePrice ? ` · <span class="nb">før ${kr(o.prePrice)}</span>` : ''}</span></span>
-          <button class="btn ghost small" data-track="${esc(o.heading)}">+ Track</button></div>
+        <div class="foot"><span><b class="nb">${kr(o.price)}</b> <span class="muted small"><span class="nb">${esc(o.shop)}</span>${o.regular ? ` · <span class="nb">før ${kr(o.regular.price)}</span>` : ''}</span></span>
+          <button class="btn ghost small" type="button" data-track="${esc(o.heading)}">+ Track</button></div>
       </div></div>`).join('') : '<p class="muted">No offers match.</p>';
-  } catch (err) { el.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+  } catch (err) { browseOffers = []; el.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
 }
-$('#browse').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-track]');
-  if (!b) return;
-  const name = b.dataset.track.toLowerCase().replace(/\s+/g, ' ').trim();
+function startTracking(heading) {
+  const name = heading.toLowerCase().replace(/\s+/g, ' ').trim();
   fillItemForm({ id: '', name: name.charAt(0).toUpperCase() + name.slice(1), terms: [name], exclude: [] });
   show('items');
   $('#item-form').name.focus();
+}
+// Tapping a card opens the popup; the "+ Track" button keeps its own action.
+$('#browse').addEventListener('click', (e) => {
+  const track = e.target.closest('[data-track]');
+  if (track) return startTracking(track.dataset.track);
+  const card = e.target.closest('[data-offer]');
+  const o = card && browseOffers[Number(card.dataset.offer)];
+  if (o) showOffer(o, { track: o.heading });
 });
 
 // ---- settings ----

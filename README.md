@@ -20,7 +20,7 @@ For each tracked item, the app collects matching offers from your selected shops
 
 Every dropped offer is listed under **Dropped offers** with its reason.
 
-The Deals page lists each deal as a compact row. Tapping one opens a popup with the image, flyer text, the regular price and where it comes from, and a **View in flyer** link to the offer on eTilbudsavis.
+The Deals page lists each deal as a compact row. Tapping one opens a popup with the image, flyer text, the regular price and where it comes from, and a **View in flyer** link to the offer on eTilbudsavis. Dropped offers and Browse results open the same popup: a dropped offer shows why it was left out, and a browse result has a **+ Track** button.
 
 ## Match terms
 

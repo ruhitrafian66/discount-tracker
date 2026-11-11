@@ -218,6 +218,24 @@ test('a shown deal carries its flyer link (null when the offer has none)', () =>
   assert.equal(r.shops[0].items[0].url, null);
 });
 
+test('a dropped offer carries the details needed to show it', () => {
+  const loser = { ...offer('KIWI', 'Meierismør', 49.9, { pre: 72.9, desc: 'Tine, 500 g' }), url: 'https://etilbudsavis.no/KIWI?offer=y' };
+  const winner = offer('REMA 1000', 'Smør', 39.9, { pre: 69.9 });
+  const noRef = offer('Extra', 'Smør', 20, { size: 250 });  // cheapest per kg in its own right? 80/kg vs 79.8 -> loses
+  const r = E.compute({ offers: [loser, winner, noRef], trackedItems: [smor], shopKeys: shops, now: NOW });
+  const d = r.dropped.find((x) => x.shop === 'KIWI');
+  assert.equal(d.id, loser.id);
+  assert.equal(d.url, 'https://etilbudsavis.no/KIWI?offer=y');
+  assert.equal(d.description, 'Tine, 500 g');
+  assert.equal(d.unit, 'kg');
+  assert.equal(d.unitPrice.toFixed(2), '99.80');
+  assert.deepEqual(d.regular, { price: 72.9, unitPrice: 72.9 / 0.5, source: 'Førpris in flyer' });
+  assert.equal(d.runTill, loser.run_till);
+  assert.match(d.reason, /Cheaper at REMA 1000/);
+  // An offer with no flyer regular price has regular: null (not undefined).
+  assert.equal(r.dropped.find((x) => x.shop === 'Extra').regular, null);
+});
+
 test('shop keys line up across sources', () => {
   assert.equal(E.shopKey('Coop Extra'), E.shopKey('Extra'));
   assert.equal(E.shopKey('Coop Obs'), E.shopKey('Obs'));

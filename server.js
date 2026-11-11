@@ -216,7 +216,7 @@ async function api(req, res, url) {
       .filter((o) => !q || engine.termMatches(q, o.heading, o.description))
       .sort((a, b) => a.heading.localeCompare(b.heading, 'nb'))
       .slice(0, 300)
-      .map((o) => ({ id: o.id, heading: o.heading, description: o.description, price: o.pricing.price, prePrice: o.pricing.pre_price, shop: o.dealer.name, image: o.images.thumb, runTill: o.run_till }));
+      .map(engine.describeOffer);
     return send(res, 200, { offers: hits });
   }
 
