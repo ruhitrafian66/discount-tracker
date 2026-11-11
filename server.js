@@ -42,7 +42,6 @@ const kassalCache = load('kassal.json', {});
 const status = { refreshing: false, kassalRefreshing: false, kassalError: null };
 
 const locKey = (l) => `${l.lat.toFixed(4)},${l.lng.toFixed(4)},${l.radiusKm}`;
-const termsKey = (it) => JSON.stringify([it.terms, it.name]);
 
 // ---- refresh --------------------------------------------------------------
 
@@ -83,12 +82,15 @@ async function refreshKassal({ force = false } = {}) {
   status.kassalRefreshing = true;
   status.kassalError = null;
   try {
+    const offers = weekOffers();
     for (const item of [...settings.trackedItems]) {
+      const terms = engine.searchTerms(item, offers);
+      const key = JSON.stringify(terms);
       const c = kassalCache[item.id];
-      if (!force && c && c.termsKey === termsKey(item) && Date.now() - c.fetchedAt < KASSAL_TTL) continue;
+      if (!force && c && c.termsKey === key && Date.now() - c.fetchedAt < KASSAL_TTL) continue;
       try {
-        const products = await kassal.productsForItem(settings.kassalKey, item);
-        kassalCache[item.id] = { fetchedAt: Date.now(), termsKey: termsKey(item), products };
+        const products = await kassal.productsForTerms(settings.kassalKey, terms);
+        kassalCache[item.id] = { fetchedAt: Date.now(), termsKey: key, products };
       } catch (e) {
         status.kassalError = e.status === 401 ? 'Kassalapp rejected the API key (401).' : e.message;
         if (e.status === 401) break;
@@ -102,9 +104,12 @@ async function refreshKassal({ force = false } = {}) {
   }
 }
 
+// Kassalapp runs after offers: its search spellings are learned from the offers.
 function refreshAll(opts) {
-  refreshOffers(opts).catch((e) => log('offers refresh failed:', e.message));
-  refreshKassal(opts).catch((e) => log('kassal refresh failed:', e.message));
+  refreshOffers(opts)
+    .catch((e) => log('offers refresh failed:', e.message))
+    .then(() => refreshKassal(opts))
+    .catch((e) => log('kassal refresh failed:', e.message));
 }
 
 // ---- view model ---------------------------------------------------------
@@ -155,6 +160,9 @@ const list = (v) => (Array.isArray(v) ? v : String(v || '').split(','))
 function cleanItem(body, id) {
   const name = str(body.name, 60);
   if (!name) throw httpError(400, 'Name is required');
+  if (settings.trackedItems.some((i) => i.id !== id && engine.fold(i.name) === engine.fold(name))) {
+    throw httpError(409, `Already tracking "${name}"`);
+  }
   const terms = list(body.terms);
   return { id, name, terms: terms.length ? terms : [name], exclude: list(body.exclude) };
 }

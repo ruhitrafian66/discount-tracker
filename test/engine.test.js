@@ -88,6 +88,30 @@ test('word matching: prefix by default, * for compound endings', () => {
   assert.ok(!E.itemMatches({ id: 'k', name: 'K', terms: ['kaffe'] }, 'Iskaffe', ''));
 });
 
+test('matching ignores æøå spelling differences', () => {
+  const k = { id: 'k', name: 'kjottdeig', terms: ['kjottdeig'] };
+  assert.ok(E.itemMatches(k, 'COOP KJØTTDEIG', '14% fett'));
+  assert.ok(E.itemMatches({ id: 'k', name: 'K', terms: ['kjøttdeig'] }, 'Kjottdeig', ''));
+  assert.ok(E.itemMatches({ id: 'b', name: 'B', terms: ['blabaer'] }, 'Blåbær', ''));
+  assert.ok(!E.itemMatches({ id: 'k', name: 'K', terms: ['kjottdeig'], exclude: ['kylling'] }, 'KYLLINGKJØTTDEIG', ''));
+});
+
+test('Kassalapp search terms use the spelling seen in flyers and drop *', () => {
+  const offers = [offer('Extra', 'Coop Kjøttdeig', 110), offer('KIWI', 'Meierismør', 40)];
+  assert.deepEqual(E.searchTerms({ name: 'k', terms: ['kjottdeig'] }, offers), ['kjøttdeig']);
+  assert.deepEqual(E.searchTerms({ name: 's', terms: ['*smor'] }, offers), ['smør']);
+  assert.deepEqual(E.searchTerms({ name: 'x', terms: ['ost', 'ab'] }, offers), ['ost']);
+});
+
+test('Coop 2-for-110 kjøttdeig wins on unit price and is shown', () => {
+  const coop = offer('Extra', 'Coop Kjøttdeig', 110, { size: 400, pieces: 2, desc: '14 %. 400 g\nKun 55,- pr pakke' });
+  const kiwi = offer('KIWI', 'KJØTTDEIG 14 % FETT', 79.9, { pre: 89.9, size: 400 });
+  const rema = offer('REMA 1000', 'KJØTTDEIG AV STORFE 14%', 64.9, { pre: 78.9, size: 400 });
+  const r = E.compute({ offers: [coop, kiwi, rema], trackedItems: [{ id: 'k', name: 'kjottdeig', terms: ['kjottdeig'] }], shopKeys: shops, now: NOW });
+  assert.deepEqual(items(r.shops), [['Extra', 'Coop Kjøttdeig']]);
+  assert.equal(r.shops[0].items[0].unitPrice, 137.5);
+});
+
 test('pack counts are read from the text when the flyer says "1 pcs"', () => {
   const o = offer('X', 'COOP FROKOSTEGG 18 PK', 69.9, { size: 1, unit: 'pcs' });
   assert.deepEqual(E.offerAmount(o), { dim: 'stk', amount: 18 });
