@@ -96,30 +96,41 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 0;
   background: var(--card); border: 1px solid var(--line); border-top: 0;
   border-radius: 0 0 var(--radius) var(--radius); padding: 4px 12px;
 }
-.deal { display: grid; grid-template-columns: 64px 1fr auto; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
-.deal:first-child { border-top: 0; }
 /* Wrap rules: text breaks between words; units like "137,50 kr/kg" never split
    (.nb); only very long unbroken strings (URLs, codes) break mid-word. */
 .nb { white-space: nowrap; }
 
-.deal {
-  display: grid; gap: 2px 12px; padding: 12px 0; border-top: 1px solid var(--line);
-  grid-template-columns: 64px minmax(0, 1fr) auto;
-  grid-template-areas: "img title prices" "img body prices";
-  align-items: start;
-}
+.deals-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 4px 12px; }
+.deals-bar > span { flex: 1 1 0; min-width: 0; }
+.deals-bar .btn { white-space: nowrap; flex: none; }
+
+/* Compact deal row: title + price on line 1, short facts + discount on line 2. */
+.deal { border-top: 1px solid var(--line); }
 .deal:first-child { border-top: 0; }
-.deal .d-img { grid-area: img; width: 64px; height: 64px; object-fit: contain; border-radius: 8px; background: #fff; }
-.deal .d-title { grid-area: title; font-weight: 650; overflow-wrap: break-word; }
-.deal .d-body { grid-area: body; min-width: 0; overflow-wrap: break-word; }
-.deal .d-prices { grid-area: prices; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; white-space: nowrap; }
-.deal .desc { font-size: 13px; color: var(--muted); cursor: pointer; }
-.deal .desc.clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.d-head {
+  display: grid; width: 100%; padding: 9px 0; gap: 1px 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "title price" "sub save";
+  align-items: baseline; text-align: left;
+  background: none; border: 0; color: inherit; font: inherit; cursor: pointer;
+}
+.d-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.d-title { grid-area: title; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.d-title::before { content: "›"; display: inline-block; width: 14px; color: var(--muted); transition: transform .15s; }
+.deal.open .d-title { white-space: normal; overflow-wrap: break-word; }
+.deal.open .d-title::before { transform: rotate(90deg); }
+.d-price { grid-area: price; font-size: 16px; font-weight: 750; white-space: nowrap; text-align: right; }
+.d-sub { grid-area: sub; display: flex; flex-wrap: wrap; gap: 0 10px; padding-left: 14px; font-size: 12.5px; color: var(--muted); }
+.d-head .save { grid-area: save; justify-self: end; }
+
+.d-detail { display: flex; gap: 12px; padding: 2px 0 12px 14px; }
+.d-detail[hidden] { display: none; }
+.d-detail .d-img { width: 72px; height: 72px; flex: none; object-fit: contain; border-radius: 8px; background: #fff; }
+.d-detail .d-body { min-width: 0; overflow-wrap: break-word; }
+.deal .desc { font-size: 13px; color: var(--muted); }
 .deal .ref { font-size: 13px; margin-top: 4px; }
-.deal .ref s { color: var(--muted); }
 .deal .src { font-size: 12px; color: var(--muted); }
-.deal .price { font-size: 18px; font-weight: 750; }
-.deal .unit { font-size: 12px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .d-title::before { transition: none; } }
 .meta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 4px; }
 .save { display: inline-block; font-size: 12px; font-weight: 700; color: var(--save); background: var(--save-bg); padding: 1px 7px; border-radius: 99px; white-space: nowrap; }
 .chip { display: inline-block; font-size: 12px; background: var(--chip); color: var(--accent); padding: 1px 8px; border-radius: 99px; font-weight: 600; white-space: nowrap; }
@@ -172,10 +183,7 @@ details.panel > summary { cursor: pointer; font-weight: 650; }
 }
 
 @media (max-width: 520px) {
-  /* Price goes in one row right under the title instead of a narrow column. */
-  .deal { grid-template-columns: 52px minmax(0, 1fr); grid-template-areas: "img title" "img prices" "img body"; }
-  .deal .d-img { width: 52px; height: 52px; }
-  .deal .d-prices { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+  .d-detail .d-img { width: 56px; height: 56px; }
   .shop > summary { flex-wrap: wrap; row-gap: 2px; }
   .shop .total { flex-basis: 100%; text-align: left; padding-left: 46px; }
   /* Four tabs must fit at 360px without scrolling. */

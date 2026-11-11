@@ -70,7 +70,14 @@ function renderDeals() {
   } else if (!result.shops.length) {
     el.innerHTML = `<div class="panel empty">${status.refreshing ? 'Fetching offers…' : 'None of your tracked items has a qualifying deal this week.'}</div>`;
   } else {
-    el.innerHTML = result.shops.map(shopHtml).join('');
+    const count = result.shops.reduce((a, s) => a + s.items.length, 0);
+    const saved = result.shops.reduce((a, s) => a + s.items.reduce((b, i) => b + (i.regular.price - i.price), 0), 0);
+    el.innerHTML = `<div class="deals-bar">
+        <span><span class="nb"><b>${count}</b> deal${count === 1 ? '' : 's'} in ${result.shops.length} shop${result.shops.length === 1 ? '' : 's'}</span>
+          <span class="nb muted">· save up to ${kr(saved)}</span></span>
+        <button id="expand-all" class="btn ghost small" type="button">Expand all</button>
+      </div>` + result.shops.map(shopHtml).join('');
+    syncExpandAll();
   }
 
   const missing = result.summary.filter((s) => s.candidates === 0).map((s) => s.name);
@@ -95,42 +102,74 @@ function shopHtml(shop) {
       <span class="name">${esc(shop.name)}</span>
       <span class="total">${shop.items.length} item${shop.items.length === 1 ? '' : 's'} · save ${kr(total)}</span>
     </summary>
-    <div class="shop-items">${shop.items.map(dealHtml).join('')}</div>
+    <div class="shop-items">${shop.items.map((i) => dealHtml(shop, i)).join('')}</div>
   </details>`;
 }
 
-// Grid areas: image | title | prices, with the body below the title.
-// On phones the prices move into a single row under the title (see style.css).
-function dealHtml(i) {
+// Compact by default: each deal is a two-line row (name, price, discount, regular
+// price, unit price, end date). Tapping the row opens the details: image, flyer
+// text, where the regular price comes from, and the tracked item it matched.
+// Which rows are open survives re-renders.
+const openDeals = new Set();
+const dealKey = (shop, i) => `${shop.key}:${i.id}`;
+
+function dealHtml(shop, i) {
+  const key = dealKey(shop, i);
+  const open = openDeals.has(key);
   const starts = new Date(i.runFrom) > new Date();
   const desc = i.description ? i.description.replace(/\s*\n\s*/g, ' · ') : '';
-  return `<div class="deal">
-    ${i.image ? `<img class="d-img" src="${esc(i.image)}" alt="" loading="lazy">` : '<div class="d-img"></div>'}
-    <div class="d-title">${esc(i.heading)}</div>
-    <div class="d-prices">
-      <span class="price">${kr(i.price)}</span>
-      <span class="unit">${kr(i.unitPrice)}/${esc(i.unit)}</span>
+  return `<div class="deal${open ? ' open' : ''}" data-key="${esc(key)}">
+    <button class="d-head" type="button" aria-expanded="${open}">
+      <span class="d-title">${esc(i.heading)}</span>
+      <span class="d-price">${kr(i.price)}</span>
+      <span class="d-sub">
+        <span class="nb">Regular <s>${kr(i.regular.price)}</s></span>
+        <span class="nb">${kr(i.unitPrice)}/${esc(i.unit)}</span>
+        <span class="nb">${starts ? 'from ' + day.format(new Date(i.runFrom)) + ', ' : ''}until ${day.format(new Date(i.runTill))}</span>
+      </span>
       <span class="save">−${i.savingsPct}%</span>
-    </div>
-    <div class="d-body">
-      ${desc ? `<div class="desc clamp" title="Tap to show all" role="button" tabindex="0">${esc(desc)}</div>` : ''}
-      <div class="ref"><span class="nb">Regular: <s>${kr(i.regular.price)}</s></span> <span class="nb muted">(${kr(i.regular.unitPrice)}/${esc(i.unit)})</span></div>
-      <div class="src">${esc(i.regular.source)}</div>
-      <div class="meta-row">${i.trackedItems.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}
-        <span class="when">${starts ? 'from ' + day.format(new Date(i.runFrom)) + ' · ' : ''}until ${day.format(new Date(i.runTill))}</span></div>
+    </button>
+    <div class="d-detail"${open ? '' : ' hidden'}>
+      ${i.image ? `<img class="d-img" src="${esc(i.image)}" alt="" loading="lazy">` : ''}
+      <div class="d-body">
+        ${desc ? `<div class="desc">${esc(desc)}</div>` : ''}
+        <div class="ref"><span class="nb">Regular price: ${kr(i.regular.price)}</span> <span class="nb muted">(${kr(i.regular.unitPrice)}/${esc(i.unit)})</span></div>
+        <div class="src">${esc(i.regular.source)}</div>
+        <div class="meta-row"><span class="muted small">Tracked as</span>${i.trackedItems.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}</div>
+      </div>
     </div>
   </div>`;
 }
 
-// Long flyer descriptions are clamped to two lines; tap/Enter toggles the rest.
-function toggleDesc(e) {
-  const d = e.target.closest('.desc');
-  if (!d || (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ')) return;
-  e.preventDefault();
-  d.classList.toggle('clamp');
+function setDealOpen(el, open) {
+  el.classList.toggle('open', open);
+  el.querySelector('.d-head').setAttribute('aria-expanded', String(open));
+  el.querySelector('.d-detail').hidden = !open;
+  open ? openDeals.add(el.dataset.key) : openDeals.delete(el.dataset.key);
 }
-$('#deals').addEventListener('click', toggleDesc);
-$('#deals').addEventListener('keydown', toggleDesc);
+function syncExpandAll() {
+  const btn = $('#expand-all');
+  if (!btn) return;
+  const all = document.querySelectorAll('#deals .deal');
+  const allOpen = all.length > 0 && [...all].every((d) => d.classList.contains('open'));
+  btn.textContent = allOpen ? 'Collapse all' : 'Expand all';
+  btn.dataset.open = String(allOpen);
+}
+$('#deals').addEventListener('click', (e) => {
+  const head = e.target.closest('.d-head');
+  if (head) {
+    const deal = head.parentElement;
+    setDealOpen(deal, !deal.classList.contains('open'));
+    return syncExpandAll();
+  }
+  const btn = e.target.closest('#expand-all');
+  if (btn) {
+    const open = btn.dataset.open !== 'true';
+    document.querySelectorAll('#deals .deal').forEach((d) => setDealOpen(d, open));
+    if (open) document.querySelectorAll('#deals details.shop').forEach((s) => { s.open = true; });
+    syncExpandAll();
+  }
+});
 
 // ---- tracked items ----
 // Selection for bulk actions, and which delete is awaiting in-page confirmation
