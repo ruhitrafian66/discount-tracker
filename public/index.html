@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Tilbud Tracker</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏷️</text></svg>">
+  <meta name="theme-color" content="#f5f3ee" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121211" media="(prefers-color-scheme: dark)">
   <!-- Start the data request and the image-host connection while app.js is still downloading. -->
   <link rel="preload" href="/api/state" as="fetch" crossorigin>
   <link rel="preconnect" href="https://image-transformer-api.tjek.com">
@@ -13,17 +15,22 @@
 <body>
   <header class="top">
     <div class="brand">
-      <h1>Tilbud Tracker</h1>
-      <p id="status" class="muted">Loading…</p>
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z"/><circle cx="8" cy="8" r="1.6" fill="currentColor"/></svg></span>
+      <div>
+        <h1>Tilbud Tracker</h1>
+        <p id="status" class="muted">Loading…</p>
+      </div>
     </div>
   </header>
 
-  <nav class="tabs" role="tablist">
-    <button role="tab" data-view="deals" aria-selected="true">Deals</button>
-    <button role="tab" data-view="items">Tracked items</button>
-    <button role="tab" data-view="browse">Browse offers</button>
-    <button role="tab" data-view="settings">Settings</button>
-  </nav>
+  <div class="tabs-wrap">
+    <nav class="tabs"><div class="tabs-track" role="tablist">
+      <button role="tab" data-view="deals" aria-selected="true">Deals</button>
+      <button role="tab" data-view="items">Tracked</button>
+      <button role="tab" data-view="browse">Browse</button>
+      <button role="tab" data-view="settings">Settings</button>
+    </div></nav>
+  </div>
 
   <main>
     <section id="view-deals" class="view">
