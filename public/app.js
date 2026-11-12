@@ -72,17 +72,20 @@ function renderDeals() {
   const { result, settings, status } = state;
   const el = $('#deals');
   if (!settings.trackedItems.length) {
-    el.innerHTML = `<div class="panel empty"><p><b>No tracked items yet.</b></p><p>Add the groceries you buy under <a href="#items" data-go="items">Tracked items</a>, or find some under <a href="#browse" data-go="browse">Browse offers</a>.</p></div>`;
+    el.innerHTML = `<div class="panel empty"><div class="empty-icon" aria-hidden="true">🛒</div><p><b>No tracked items yet.</b></p><p>Add the groceries you buy under <a href="#items" data-go="items">Tracked items</a>, or find some under <a href="#browse" data-go="browse">Browse offers</a>.</p></div>`;
   } else if (!result.shops.length) {
-    el.innerHTML = `<div class="panel empty">${status.refreshing ? 'Fetching offers…' : 'None of your tracked items has a qualifying deal this week.'}</div>`;
+    el.innerHTML = `<div class="panel empty"><div class="empty-icon" aria-hidden="true">${status.refreshing ? '⏳' : '🔎'}</div><p>${status.refreshing ? 'Fetching offers…' : 'None of your tracked items has a qualifying deal this week.'}</p></div>`;
   } else {
     const count = result.shops.reduce((a, s) => a + s.items.length, 0);
     const saved = result.shops.reduce((a, s) => a + s.saved, 0);
-    el.innerHTML = `<div class="deals-bar">
-        <span><span class="nb"><b>${count}</b> deal${count === 1 ? '' : 's'} in ${result.shops.length} shop${result.shops.length === 1 ? '' : 's'}</span>
-          <span class="nb muted">· save up to ${kr(saved)}</span></span>
-        <span class="muted small nb">Tap a deal for details</span>
-      </div>` + result.shops.map(shopHtml).join('');
+    el.innerHTML = `<div class="hero">
+        <div><div class="hero-label">You can save this week</div><div class="hero-num nb">${kr(saved)}</div></div>
+        <div class="hero-stats">
+          <div><b>${count}</b><span>deal${count === 1 ? '' : 's'}</span></div>
+          <div><b>${result.shops.length}</b><span>shop${result.shops.length === 1 ? '' : 's'}</span></div>
+        </div>
+      </div>
+      <p class="deals-hint">Tap a deal for the flyer, regular price and details.</p>` + result.shops.map(shopHtml).join('');
   }
 
   const missing = result.summary.filter((s) => s.candidates === 0).map((s) => s.name);
@@ -103,8 +106,9 @@ function shopHtml(shop) {
   return `<details class="shop" open>
     <summary>
       ${shop.logo ? `<img class="logo" src="${esc(shop.logo)}" alt="" loading="lazy">` : ''}
-      <span class="name">${esc(shop.name)}</span>
-      <span class="total">${shop.items.length} item${shop.items.length === 1 ? '' : 's'} · save ${kr(shop.saved)}</span>
+      <span class="who"><span class="name">${esc(shop.name)}</span><span class="count">${shop.items.length} deal${shop.items.length === 1 ? '' : 's'}</span></span>
+      <span class="total">save ${kr(shop.saved)}</span>
+      <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
     </summary>
     <div class="shop-items">${shop.items.map((i) => dealHtml(shop, i)).join('')}</div>
   </details>`;
