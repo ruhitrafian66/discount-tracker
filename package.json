@@ -1,0 +1,12 @@
+{
+  "name": "discount-tracker",
+  "private": true,
+  "description": "Only the Netlify functions use a dependency; the Pi (server.js) needs no npm install.",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@netlify/blobs": "11.1.7"
+  }
+}

@@ -1,0 +1,20 @@
+# Netlify deploy. No build step: public/ is served as-is and the functions in
+# netlify/functions/ are bundled by Netlify (which installs @netlify/blobs).
+# Set ADMINS, SIGNUP_CODE and optionally KASSAL_KEY under Site configuration →
+# Environment variables (see README.md).
+[build]
+  publish = "public"
+  command = "echo 'no build step'"
+
+[build.environment]
+  NODE_VERSION = "22"   # @netlify/blobs 11 needs Node >= 22.12; functions use this version too
+
+[functions]
+  node_bundler = "esbuild"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "same-origin"
+    Cache-Control = "no-cache"

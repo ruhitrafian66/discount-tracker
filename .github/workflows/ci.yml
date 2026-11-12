@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, netlify]
   pull_request:
 
 permissions:
@@ -20,7 +20,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Syntax check
-        run: for f in server.js lib/*.js public/app.js; do node --check "$f"; done
+        run: for f in server.js lib/*.js public/app.js netlify/*.mjs netlify/functions/*.mjs; do node --check "$f"; done
       - name: Unit tests
         run: node --test test/*.test.js
       - name: Smoke test server
@@ -28,7 +28,8 @@ jobs:
           DISABLE_FETCH=1 DATA_DIR="$RUNNER_TEMP/data" PORT=3913 node server.js &
           for i in $(seq 1 20); do curl -fsS -o /dev/null http://127.0.0.1:3913/api/state && break; sleep 1; done
           curl -fsS http://127.0.0.1:3913/ | grep -q "Tilbud Tracker"
-          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -d x=1 http://127.0.0.1:3913/api/items)" = 415
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -d x=1 http://127.0.0.1:3913/api/auth/login)" = 415
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:3913/api/items)" = 401
 
   shellcheck:
     runs-on: ubuntu-latest

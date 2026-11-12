@@ -1,6 +1,8 @@
 # CLAUDE.md
 
-Tilbud Tracker: a LAN-only web app showing this week's Norwegian grocery discounts, grouped by shop, filtered to the user's tracked items. Self-hosted on a home server. See README.md for user-facing behaviour. Machine-specific details (SSH alias, host layout) are in the untracked `CLAUDE.local.md`. Never commit them: the repo is public.
+**Branches:** `main` is the Pi build (LAN, no auth, one shared settings file); the Pi's pull-deployer follows it. `netlify` (this branch) is the Netlify build with accounts; Netlify's production branch is `netlify`. Don't merge `netlify` into `main`. Fixes to shared code (`lib/engine.js`, `lib/tjek.js`, `lib/kassal.js`, the UI) go to `main` first, then get merged into `netlify`.
+
+Tilbud Tracker: a web app showing this week's Norwegian grocery discounts, grouped by shop, filtered to each user's tracked items. Runs self-hosted on a home server (LAN, `server.js`) and on Netlify (`netlify/`), from the same core (`lib/app.js`). See README.md for user-facing behaviour. Machine-specific details (SSH alias, host layout) are in the untracked `CLAUDE.local.md`. Never commit them: the repo is public.
 
 ## Commands
 
@@ -14,10 +16,12 @@ git push origin main                       # deploys: CI passes -> server pulls 
 
 ## Constraints
 
-- **No npm dependencies, no build step.** The Pi runs Node 20, so use only Node 20 built-ins (global `fetch`, `node:test`). `node:sqlite` is not available there; storage is atomic JSON files in `DATA_DIR`.
+- **No npm dependencies, no build step**, with one exception: `@netlify/blobs`, imported only by `netlify/*.mjs` (Netlify installs it). `server.js`, `lib/` and tests must never require it; the Pi has no `node_modules`. The Pi runs Node 20, so use only Node 20 built-ins (global `fetch`, `Request`/`Response`, `node:test`); Netlify functions run Node 22.
+- **Storage goes through `lib/store.js`** (`get/set/del/list` of JSON documents): files in `DATA_DIR` on the Pi, Blobs on Netlify, in-memory in tests. Documents are replaced, never edited in place. `lib/app.js` is host-neutral (`Request -> Response`); keep host specifics in `server.js` / `netlify/`.
+- **Accounts:** tracked items are per user (`users/<name>`); location, shops and the Kassalapp key are shared and admin-only (`ADMINS`, else the first account). Sessions are an HttpOnly cookie whose token is stored only as a SHA-256 hash (`sessions/<hash>`). Every `/api` route except `/api/state` and `/api/auth/*` needs a session.
 - `lib/engine.js` is pure (no I/O). All business rules live there and are tested in `test/engine.test.js`. Change a rule there, with a test, not in `server.js`.
 - Offer text comes from external APIs. In `public/app.js`, always pass it through `esc()` before putting it in `innerHTML`. Links go through `safeUrl()` (https only).
-- Write endpoints require `Content-Type: application/json` and a same-origin `Origin` (CSRF guard; the app has no auth). Keep that for any new mutating route.
+- Write endpoints, login included, require `Content-Type: application/json` and a same-origin `Origin` (CSRF guard on top of `SameSite=Lax`). Keep that for any new mutating route.
 - Never return the Kassalapp key to the client; the API only exposes `kassalKeySet`.
 - One popup shows every offer: `showOffer()` in `public/app.js`, used by Deals, Dropped offers and Browse. Offers that are not shown deals get their display shape from `engine.describeOffer()` (dropped entries and `/api/offers`). Add a field in both places, not per list.
 
@@ -25,9 +29,9 @@ git push origin main                       # deploys: CI passes -> server pulls 
 
 Opening the app must stay fast; `/api/state` once took 2.7 s there. Rules that keep it at a few ms:
 
-- `server.js` caches the week's offers and the serialised state (`cached()`, keyed on `rev`). Anything that changes what the view shows must end in `save()` or call `touch()`, or the old view keeps being served. The cache also expires after 5 minutes because "this week" depends on the clock.
+- `lib/app.js` caches the week's offers (keyed on `rev`) and each user's serialised state (keyed on `rev` + the user's `rev`). Shared data must change through `saveGlobal()` and user data through `saveUser()`, or the old view keeps being served. The caches also expire after 5 minutes because "this week" depends on the clock. On the Pi the file store keeps every document in memory; on Netlify shared data is re-read after `globalTtlMs` (60 s).
 - Never construct `Intl.DateTimeFormat` per offer or per request; use `osloParts()` in the engine. Pass a precomputed `end` to `isThisWeek()` when filtering.
-- `fold()`, `words()` and `termWords()` are memoised per string, and `compileItem()` per item object. Tracked items are replaced, never edited in place, so that cache stays valid; keep it that way. Do not mutate arrays returned by `words()`.
+- `fold()`, `words()` and `termWords()` are memoised per string, and `compileItem()` and the Kassalapp `termsKeyFor()` per item object. Tracked items are replaced, never edited in place, so that cache stays valid; keep it that way. Do not mutate arrays returned by `words()`.
 - Static files and `/api/state` send ETags; nginx gzips JS, CSS and JSON (in `deploy/nginx.conf.template`, applied by `setup-server.sh`, not by the pull deploy).
 
 ## The user's rules (do not weaken)
@@ -49,7 +53,7 @@ Opening the app must stay fast; `/api/state` once took 2.7 s there. Rules that k
 
 ## Fetch schedule
 
-Offers are fetched once per week (`engine.fetchSlots`, default Monday 01:00 Oslo time; `FETCH_WEEKDAY`/`FETCH_HOUR`) and cached all week. This is a user requirement: keep API load minimal, with no manual refresh button or TTL-based refetching. The 15-minute timer is only a local staleness check. The only off-schedule API calls are for a changed location, a newly selected shop, a failed shop (retried at most hourly), and Kassalapp lookups for new or edited items. Changing what `tjek.slim()` stores needs a bump of `OFFERS_CACHE_V` in `server.js`, which rebuilds the cache once; do that only when a feature needs new fields.
+Offers are fetched once per week (`engine.fetchSlots`, default Monday 01:00 Oslo time; `FETCH_WEEKDAY`/`FETCH_HOUR`) and cached all week. This is a user requirement: keep API load minimal, with no manual refresh button or TTL-based refetching. The 15-minute timer (Pi: `setInterval`; Netlify: the `refresh` scheduled function) is only a local staleness check calling `work()`. `work({ budgetMs })` stops starting API calls after the budget (Netlify functions are time-limited) and the next run resumes, because each shop's fetch time is stored separately. The Kassalapp cache is keyed by search-term set, shared across users; `flags.kassalDirtyAt` marks a new or edited item. The only off-schedule API calls are for a changed location, a newly selected shop, a failed shop (retried at most hourly), and Kassalapp lookups for new or edited items. Changing what `tjek.slim()` stores needs a bump of `OFFERS_CACHE_V` in `lib/app.js`, which rebuilds the cache once; do that only when a feature needs new fields.
 
 ## Matching semantics
 
@@ -61,6 +65,7 @@ A term word matches words that *start with* it; a leading `*` matches words that
 
 Pull-based CD (see README.md): `.github/workflows/ci.yml` runs on GitHub, and the server's `discount-tracker-deploy.timer` runs `deploy/pull-deploy.sh` every minute. That script deploys `origin/main` only once all check runs for the commit succeeded, then runs the tests, restarts, health-checks `/api/state` and rolls back on failure. Notes:
 
+- Netlify deploys from the same push (Netlify's Git integration, `netlify.toml`); its secrets (`ADMINS`, `SIGNUP_CODE`, `KASSAL_KEY`) live in Netlify's environment variables, never in the repo.
 - To deploy, push to main. There is no push-based deploy script, and the server must never need inbound access or GitHub secrets.
 - `pull-deploy.sh` reinstalls itself and the units from the repo on each deploy, so changes to them ship like code. Keep its body inside `main()`: bash reads scripts lazily, and the file is replaced while running.
 - Host-specific values belong in `/etc/discount-tracker/env` on the server (template: `deploy/env.example`), not in tracked files. nginx config is rendered from `deploy/nginx.conf.template`.

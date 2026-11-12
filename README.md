@@ -1,8 +1,17 @@
 # Tilbud Tracker
 
-LAN-only web app that shows this week's grocery discounts in Norway, grouped by shop, for the items you track.
+Web app that shows this week's grocery discounts in Norway, grouped by shop, for the items you track.
 
-Runs on a small home server behind nginx. It's meant for your local network only and has no login.
+**This is the `netlify` branch**: the Netlify deployment, with accounts. The `main` branch is the LAN build for the home server (no login, one shared list) and is what the server deploys. `server.js` still works here for local development; see [Netlify](#netlify) for deploying.
+
+## Accounts
+
+Each person logs in with a username and password. Tracked items belong to the account, so they follow you to any device. Location, shops and the Kassalapp key are shared by everyone on the site, and only admins can change them.
+
+- Passwords are stored as scrypt hashes. A login sets an `HttpOnly`, `SameSite=Lax` session cookie (`Secure` over https) that lasts 90 days. The server stores only a hash of the session token, so logging out revokes it.
+- Admins: the usernames in `ADMINS`, or the first account created if `ADMINS` is unset.
+- `SIGNUP_CODE`: if set, creating an account needs this code. Set it on a public site. `MAX_USERS` (default 100) caps the number of accounts.
+- Upgrading a Pi install from before accounts existed: the first account created gets the items that were already being tracked.
 
 ## Rules
 
@@ -40,7 +49,10 @@ Use **Browse offers** to try terms out. It uses the same matching rules.
 ## Layout
 
 ```
-server.js          HTTP server, JSON-file storage, refresh scheduler, API
+lib/app.js         API, accounts/sessions, offer + Kassalapp refresh (host-neutral: Request -> Response)
+lib/store.js       storage interface; JSON files (Pi) and in-memory (tests)
+server.js          Pi entry point: static files, adapter to lib/app.js, 15-minute refresh timer
+netlify/           Netlify entry points (functions/api.mjs, functions/refresh.mjs) and the Blobs store
 lib/engine.js      pure comparison rules (unit-tested)
 lib/tjek.js        offer fetcher; list of grocery dealer ids
 lib/kassal.js      Kassalapp client
@@ -57,7 +69,7 @@ node --test test/*.test.js
 DATA_DIR=./data PORT=3913 node server.js     # http://localhost:3913
 ```
 
-Environment variables: `HOST` (default 127.0.0.1), `PORT` (default 3003), `DATA_DIR` (default ./data), and `FETCH_WEEKDAY` / `FETCH_HOUR` for the weekly fetch time (default 1 / 1 = Monday 01:00 Oslo), and `DISABLE_FETCH=1` to skip all calls to the external APIs (used in CI).
+Environment variables: `HOST` (default 127.0.0.1), `PORT` (default 3003), `DATA_DIR` (default ./data), and `FETCH_WEEKDAY` / `FETCH_HOUR` for the weekly fetch time (default 1 / 1 = Monday 01:00 Oslo), `DISABLE_FETCH=1` to skip all calls to the external APIs (used in CI), and the account settings `ADMINS`, `SIGNUP_CODE`, `MAX_USERS` and `KASSAL_KEY` (see [Accounts](#accounts) and [deploy/env.example](deploy/env.example)).
 
 ## Deployment (pull-based CD)
 
@@ -87,3 +99,27 @@ systemctl start discount-tracker-deploy       # deploy now instead of waiting
 ```
 
 A commit whose CI or deploy fails is recorded in `/var/lib/discount-tracker-deploy/failed` and skipped. The next good commit deploys normally.
+
+## Netlify
+
+`netlify.toml` serves `public/` as static files. `netlify/functions/api.mjs` handles `/api/*`, and Netlify Blobs replaces the JSON files. `netlify/functions/refresh.mjs` is a scheduled function that runs every 15 minutes. It does the same staleness check as the Pi's timer, so the external APIs are still only called once a week, plus the off-schedule cases. There is no build step. Netlify installs the one dependency, `@netlify/blobs`, which only the functions use.
+
+One-time setup:
+
+1. In Netlify: **Add new site → Import an existing project**, then pick this GitHub repo. The build settings come from `netlify.toml`.
+2. Before the first deploy, under **Site configuration → Environment variables**, set:
+   - `ADMINS`: your username (otherwise whoever registers first becomes the admin),
+   - `SIGNUP_CODE`: a code you share with the people who should be able to sign up,
+   - optionally `KASSAL_KEY`, and `FETCH_WEEKDAY` / `FETCH_HOUR`.
+3. Deploy, open the site, create your account, then set location and shops under Settings.
+
+After that, every push to `main` deploys to Netlify as well as to the Pi.
+
+Differences from the Pi:
+
+- Netlify stops a scheduled function after 30 seconds, so the weekly fetch may be split over a few 15-minute runs. Monday's first offers can take up to about an hour to complete.
+- Changing the location or shops, or adding an item, starts the fetch or Kassalapp lookup right away, within the request's time limit. Whatever doesn't finish, the next scheduled run picks up.
+- Shared data is cached in each function instance for one minute.
+- The login throttle (10 failures per username per 15 minutes) is counted per function instance.
+
+Local check without Netlify: `node --test test/*.test.js` covers the core with an in-memory store. `npx netlify dev` runs the functions with a local Blobs emulator.

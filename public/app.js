@@ -16,12 +16,15 @@ const CITIES = [
 
 let state = null;
 let pollTimer = null;
+let pollDelay = 3000;
 
 async function call(method, url, body) {
   const opts = { method, headers: {} };
   if (method !== 'GET') { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body || {}); }
   const res = await fetch(url, opts);
   const data = await res.json().catch(() => ({}));
+  // Session expired or logged out in another tab: back to the login form.
+  if (res.status === 401 && !url.startsWith('/api/auth/')) { load(); throw new Error('Please log in again'); }
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
 }
@@ -41,11 +44,72 @@ async function load() {
 }
 
 function setState(s) {
-  state = s;
-  renderStatus(); renderDeals(); renderItems(); renderSettings();
   clearTimeout(pollTimer);
-  if (s.status.refreshing || s.status.kassalRefreshing) pollTimer = setTimeout(load, 3000);
+  if (!s.user) return showAuth(s);
+  const wasAnon = !state || !state.user;
+  state = s;
+  $('#auth').hidden = true; $('#app').hidden = false; $('#account').hidden = false;
+  $('#who').textContent = s.user.name + (s.user.admin ? ' (admin)' : '');
+  renderStatus(); renderDeals(); renderItems(); renderSettings();
+  if (wasAnon) show(currentView());
+  // While a fetch is pending, poll; back off, since on Netlify the work may wait
+  // for the next scheduled run.
+  if (s.status.refreshing || s.status.kassalRefreshing) {
+    pollTimer = setTimeout(load, pollDelay);
+    pollDelay = Math.min(pollDelay * 1.5, 60000);
+  } else pollDelay = 3000;
 }
+
+// ---- accounts ----
+let authMode = 'login';
+function showAuth(s) {
+  state = null;
+  $('#app').hidden = true; $('#account').hidden = true; $('#auth').hidden = false;
+  $('#status').textContent = 'Log in to see your deals.';
+  if (s && s.signup) $('#auth').dataset.code = s.signup.codeRequired ? '1' : '';
+  renderAuth();
+}
+function renderAuth() {
+  const reg = authMode === 'register';
+  const f = $('#auth-form');
+  $('#auth-title').textContent = reg ? 'Create an account' : 'Log in';
+  $('#auth-submit').textContent = reg ? 'Create account' : 'Log in';
+  $('#auth-switch-text').textContent = reg ? 'Have an account?' : 'No account yet?';
+  $('#auth-switch').textContent = reg ? 'Log in' : 'Create one';
+  $('#code-label').hidden = !(reg && $('#auth').dataset.code);
+  f.code.required = reg && Boolean($('#auth').dataset.code);
+  f.password.autocomplete = reg ? 'new-password' : 'current-password';
+  f.password.minLength = reg ? 8 : 0;
+}
+$('#auth-switch').addEventListener('click', (e) => {
+  e.preventDefault();
+  authMode = authMode === 'login' ? 'register' : 'login';
+  renderAuth();
+});
+$('#auth-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target, btn = $('#auth-submit');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try {
+    const body = { username: f.username.value, password: f.password.value };
+    if (authMode === 'register') body.code = f.code.value;
+    setState(await call('POST', `/api/auth/${authMode === 'register' ? 'register' : 'login'}`, body));
+    f.password.value = ''; f.code.value = '';
+  } catch (err) { toast(err.message); } finally { btn.disabled = false; }
+});
+$('#logout').addEventListener('click', async () => {
+  try { selected.clear(); fillItemForm(null); setState(await call('POST', '/api/auth/logout')); authMode = 'login'; renderAuth(); } catch (err) { toast(err.message); }
+});
+$('#pw-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    await call('POST', '/api/auth/password', { current: f.current.value, next: f.next.value });
+    f.current.value = ''; f.next.value = '';
+    toast('Password changed');
+  } catch (err) { toast(err.message); }
+});
 
 // ---- status ----
 function renderStatus() {
@@ -351,7 +415,16 @@ $('#browse').addEventListener('click', (e) => {
 
 // ---- settings ----
 function renderSettings() {
-  const { location, shops, kassalKeySet } = state.settings;
+  const { location, shops, kassalKeySet, kassalKeyFromEnv } = state.settings;
+  const admin = state.user.admin;
+  $('#acct-name').textContent = state.user.name;
+  $('#pw-form').username.value = state.user.name;
+  $('#admin-note').hidden = admin;
+  for (const f of ['#loc-form', '#shops-form', '#kassal-form']) {
+    $(f).querySelectorAll('input, select, button').forEach((el) => { el.disabled = !admin; });
+  }
+  $('#kassal-form').key.closest('label').hidden = !admin || kassalKeyFromEnv;
+  $('#kassal-form').querySelector('.row').hidden = !admin || kassalKeyFromEnv;
   const lf = $('#loc-form');
   if (!lf.contains(document.activeElement)) {
     lf.preset.innerHTML = '<option value="">Custom…</option>' + CITIES.map(([n]) => `<option${n === location.name ? ' selected' : ''}>${esc(n)}</option>`).join('');
@@ -366,7 +439,7 @@ function renderSettings() {
   }
   const st = state.status;
   $('#kassal-state').innerHTML = kassalKeySet
-    ? (st.kassalError ? `⚠️ ${esc(st.kassalError)}` : `✅ Key set${st.kassalRefreshing ? ' · looking up prices…' : ` · prices cached for ${st.kassalItems} item(s)`}`)
+    ? (st.kassalError ? `⚠️ ${esc(st.kassalError)}` : `✅ Key set${kassalKeyFromEnv ? ' on the server' : ''}${st.kassalRefreshing ? ' · looking up prices…' : ` · prices cached for ${st.kassalItems} search${st.kassalItems === 1 ? '' : 'es'}`}`)
     : 'No key set. Reference prices come from the flyers only.';
 }
 
@@ -407,5 +480,7 @@ function show(view) {
 document.querySelector('.tabs').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) show(b.dataset.view); });
 document.addEventListener('click', (e) => { const a = e.target.closest('[data-go]'); if (a) { e.preventDefault(); show(a.dataset.go); } });
 
-show(['deals', 'items', 'browse', 'settings'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'deals');
+function currentView() {
+  return ['deals', 'items', 'browse', 'settings'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'deals';
+}
 load();

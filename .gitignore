@@ -1,5 +1,6 @@
 data/
 node_modules/
+.netlify/
 *.tmp
 .DS_Store
 # machine-specific notes (server details); never commit

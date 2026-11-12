@@ -218,3 +218,8 @@ details.panel > summary { cursor: pointer; font-weight: 650; }
   .item-row { flex-wrap: wrap; }
   .item-row .grow { flex: 1 1 160px; }
 }
+
+/* accounts */
+.account { display: flex; align-items: center; gap: 8px; flex: none; }
+.auth { max-width: 420px; margin: 24px auto; padding: 0 16px; }
+.auth .btn[type=submit] { width: 100%; margin-top: 4px; }
