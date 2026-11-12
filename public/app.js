@@ -71,7 +71,7 @@ function renderDeals() {
     el.innerHTML = `<div class="panel empty">${status.refreshing ? 'Fetching offers…' : 'None of your tracked items has a qualifying deal this week.'}</div>`;
   } else {
     const count = result.shops.reduce((a, s) => a + s.items.length, 0);
-    const saved = result.shops.reduce((a, s) => a + s.items.reduce((b, i) => b + (i.regular.price - i.price), 0), 0);
+    const saved = result.shops.reduce((a, s) => a + s.saved, 0);
     el.innerHTML = `<div class="deals-bar">
         <span><span class="nb"><b>${count}</b> deal${count === 1 ? '' : 's'} in ${result.shops.length} shop${result.shops.length === 1 ? '' : 's'}</span>
           <span class="nb muted">· save up to ${kr(saved)}</span></span>
@@ -94,12 +94,11 @@ function renderDeals() {
 }
 
 function shopHtml(shop) {
-  const total = shop.items.reduce((a, i) => a + (i.regular.price - i.price), 0);
   return `<details class="shop" open>
     <summary>
       ${shop.logo ? `<img class="logo" src="${esc(shop.logo)}" alt="" loading="lazy">` : ''}
       <span class="name">${esc(shop.name)}</span>
-      <span class="total">${shop.items.length} item${shop.items.length === 1 ? '' : 's'} · save ${kr(total)}</span>
+      <span class="total">${shop.items.length} item${shop.items.length === 1 ? '' : 's'} · save ${kr(shop.saved)}</span>
     </summary>
     <div class="shop-items">${shop.items.map((i) => dealHtml(shop, i)).join('')}</div>
   </details>`;

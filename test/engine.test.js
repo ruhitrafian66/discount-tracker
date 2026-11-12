@@ -262,3 +262,13 @@ test('shop keys line up across sources', () => {
   assert.equal(E.shopKey('Coop Obs'), E.shopKey('Obs'));
   assert.equal(E.shopKey('Rema 1000'), E.shopKey('REMA 1000'));
 });
+
+test('shops are sorted by total kroner saved, most first', () => {
+  const kaffe = { id: 't2', name: 'Kaffe', terms: ['kaffe'], exclude: [] };
+  const offers = [
+    offer('KIWI', 'Meierismør', 39.9, { pre: 49.9 }),            // saves 10, one item
+    offer('REMA 1000', 'Kaffe', 59.9, { pre: 99.9, size: 250 }),  // saves 40
+  ];
+  const r = E.compute({ offers, trackedItems: [smor, kaffe], shopKeys: shops, now: NOW });
+  assert.deepEqual(r.shops.map((s) => [s.name, s.saved]), [['REMA 1000', 40], ['KIWI', 10]]);
+});
