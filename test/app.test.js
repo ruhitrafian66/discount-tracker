@@ -30,156 +30,107 @@ function setup(env = {}, store = memoryStore()) {
   return { app, store, client };
 }
 
-test('anonymous state has no user data and says whether a sign-up code is needed', async () => {
-  const { client } = setup({ SIGNUP_CODE: 'secret' });
+test('a new browser gets an empty list and no cookie until it saves something', async () => {
+  const { client, store } = setup();
   const r = await client()('GET', '/api/state');
   assert.equal(r.status, 200);
-  assert.deepEqual(r.body, { user: null, signup: { codeRequired: true } });
+  assert.deepEqual(r.body.settings.trackedItems, []);
+  assert.equal(r.headers.get('set-cookie'), null);
+  assert.deepEqual(await store.list('visitors/'), []);
 });
 
-test('register sets an HttpOnly session cookie and logs in', async () => {
+test('saving an item sets a long-lived HttpOnly cookie that brings the list back', async () => {
   const { client } = setup();
   const call = client();
-  const r = await call('POST', '/api/auth/register', { username: 'Alice', password: 'correct horse' });
+  const r = await call('POST', '/api/items', { name: 'Smør', terms: 'smør, *smør' });
   assert.equal(r.status, 201);
-  assert.match(r.headers.get('set-cookie'), /^tt_session=[\w-]{43}; Path=\/; HttpOnly; SameSite=Lax; Max-Age=\d+$/);
-  assert.equal(r.body.user.name, 'alice');
-  assert.equal(r.body.user.admin, true, 'first account is admin when ADMINS is unset');
-  const s = await call('GET', '/api/state');
-  assert.equal(s.body.user.name, 'alice');
+  assert.match(r.headers.get('set-cookie'), /^tt_visitor=[\w-]{43}; Path=\/; HttpOnly; SameSite=Lax; Max-Age=34560000$/);
+  // Same browser later (or another tab): same list.
+  const again = client(call.cookie());
+  assert.deepEqual((await again('GET', '/api/state')).body.settings.trackedItems.map((i) => i.name), ['Smør']);
 });
 
 test('cookie gets Secure over https', async () => {
   const { app } = setup();
-  const res = await app.handle(new Request('https://x.test/api/auth/register', {
+  const res = await app.handle(new Request('https://x.test/api/items', {
     method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://x.test' },
-    body: JSON.stringify({ username: 'bob', password: '12345678' }),
+    body: JSON.stringify({ name: 'Egg' }),
   }));
   assert.match(res.headers.get('set-cookie'), /; Secure$/);
 });
 
-test('tracked items are per account', async () => {
+test('each browser has its own list', async () => {
   const { client } = setup();
   const a = client(), b = client();
-  await a('POST', '/api/auth/register', { username: 'alice', password: 'password1' });
-  await b('POST', '/api/auth/register', { username: 'bob', password: 'password2' });
-  const added = await a('POST', '/api/items', { name: 'Smør', terms: 'smør, *smør' });
-  assert.equal(added.status, 201);
-  assert.equal((await a('GET', '/api/state')).body.settings.trackedItems.length, 1);
-  assert.equal((await b('GET', '/api/state')).body.settings.trackedItems.length, 0);
-  // Bob cannot edit or delete Alice's item.
+  const added = await a('POST', '/api/items', { name: 'Smør' });
+  await b('POST', '/api/items', { name: 'Egg' });
+  assert.deepEqual((await a('GET', '/api/state')).body.settings.trackedItems.map((i) => i.name), ['Smør']);
+  assert.deepEqual((await b('GET', '/api/state')).body.settings.trackedItems.map((i) => i.name), ['Egg']);
+  // B cannot edit or delete A's item, even knowing its id.
   const id = added.body.settings.trackedItems[0].id;
   assert.equal((await b('PUT', `/api/items/${id}`, { name: 'x' })).status, 404);
   await b('POST', '/api/items/delete', { ids: [id] });
   assert.equal((await a('GET', '/api/state')).body.settings.trackedItems.length, 1);
 });
 
-test('items survive logout and come back on login from another device', async () => {
-  const { client } = setup();
-  const phone = client(), laptop = client();
-  await phone('POST', '/api/auth/register', { username: 'alice', password: 'password1' });
-  await phone('POST', '/api/items', { name: 'Egg' });
-  const out = await phone('POST', '/api/auth/logout', {});
-  assert.equal(out.body.user, null);
-  assert.equal((await phone('GET', '/api/items/delete')).status, 401);
-  assert.equal((await laptop('POST', '/api/auth/login', { username: 'alice', password: 'wrong-pass' })).status, 401);
-  const r = await laptop('POST', '/api/auth/login', { username: 'ALICE', password: 'password1' });
-  assert.equal(r.status, 200);
-  assert.deepEqual(r.body.settings.trackedItems.map((i) => i.name), ['Egg']);
+test('the store keeps only a hash of the cookie, and a made-up cookie gets an empty list', async () => {
+  const { client, store } = setup();
+  const call = client();
+  await call('POST', '/api/items', { name: 'Egg' });
+  const token = call.cookie().split('=')[1];
+  const keys = await store.list('visitors/');
+  assert.equal(keys.length, 1);
+  assert.ok(!keys[0].includes(token));
+  const guess = client('tt_visitor=' + 'A'.repeat(43));
+  assert.deepEqual((await guess('GET', '/api/state')).body.settings.trackedItems, []);
 });
 
-test('logout revokes the session server-side', async () => {
+test('mutating routes need JSON and a same-origin Origin', async () => {
   const { client } = setup();
   const call = client();
-  await call('POST', '/api/auth/register', { username: 'alice', password: 'password1' });
-  // A copy of the cookie (another tab, or a stolen one) must stop working too.
-  const copy = client(call.cookie());
-  assert.equal((await copy('GET', '/api/state')).body.user.name, 'alice');
-  await call('POST', '/api/auth/logout', {});
-  assert.equal((await call('GET', '/api/state')).body.user, null);
-  assert.equal((await copy('GET', '/api/state')).body.user, null);
-});
-
-test('mutating routes need a login, JSON and a same-origin Origin', async () => {
-  const { client } = setup();
-  const call = client();
-  assert.equal((await call('POST', '/api/items', { name: 'x' })).status, 401);
-  await call('POST', '/api/auth/register', { username: 'alice', password: 'password1' });
   assert.equal((await call('POST', '/api/items', { name: 'x' }, { 'content-type': 'text/plain' })).status, 415);
   assert.equal((await call('POST', '/api/items', { name: 'x' }, { origin: 'https://evil.test' })).status, 403);
-  // Login is a write too: a cross-site page cannot log you in to its account.
-  assert.equal((await client()('POST', '/api/auth/login', { username: 'alice', password: 'password1' }, { origin: 'https://evil.test' })).status, 403);
+  assert.equal(call.cookie(), '', 'nothing saved');
 });
 
-test('sign-up code, username rules and duplicates', async () => {
-  const { client } = setup({ SIGNUP_CODE: 'letmein' });
-  const call = client();
-  assert.equal((await call('POST', '/api/auth/register', { username: 'alice', password: 'password1' })).status, 403);
-  assert.equal((await call('POST', '/api/auth/register', { username: 'alice', password: 'password1', code: 'nope' })).status, 403);
-  assert.equal((await call('POST', '/api/auth/register', { username: 'a', password: 'password1', code: 'letmein' })).status, 400);
-  assert.equal((await call('POST', '/api/auth/register', { username: 'alice', password: 'short', code: 'letmein' })).status, 400);
-  assert.equal((await call('POST', '/api/auth/register', { username: 'alice', password: 'password1', code: 'letmein' })).status, 201);
-  assert.equal((await client()('POST', '/api/auth/register', { username: 'Alice', password: 'password1', code: 'letmein' })).status, 409);
-});
+test('shared settings need ADMIN_CODE, and are locked without one', async () => {
+  const locked = setup().client();
+  assert.equal((await locked('PUT', '/api/settings', { shops: [], adminCode: '' })).status, 403);
 
-test('only admins change shared settings; ADMINS overrides first-user', async () => {
-  const { client } = setup({ ADMINS: 'bob' });
+  const { client } = setup({ ADMIN_CODE: 'open-sesame' });
   const a = client(), b = client();
-  await a('POST', '/api/auth/register', { username: 'alice', password: 'password1' });
-  await b('POST', '/api/auth/register', { username: 'bob', password: 'password2' });
   assert.equal((await a('PUT', '/api/settings', { shops: [] })).status, 403);
-  const r = await b('PUT', '/api/settings', { shops: ['257bxm'] });
+  assert.equal((await a('PUT', '/api/settings', { shops: [], adminCode: 'nope' })).status, 403);
+  const r = await a('PUT', '/api/settings', { shops: ['257bxm'], adminCode: 'open-sesame' });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.body.settings.shops, ['257bxm']);
-  assert.deepEqual((await a('GET', '/api/state')).body.settings.shops, ['257bxm'], 'shared by everyone');
+  assert.equal(r.body.settings.adminCodeSet, true);
+  assert.deepEqual((await b('GET', '/api/state')).body.settings.shops, ['257bxm'], 'shared by everyone');
 });
 
-test('the Kassalapp key is never returned', async () => {
-  const { client } = setup({ KASSAL_KEY: 'super-secret-key' });
+test('wrong admin codes are throttled', async () => {
+  const { client } = setup({ ADMIN_CODE: 'open-sesame' });
   const call = client();
-  const r = await call('POST', '/api/auth/register', { username: 'alice', password: 'password1' });
+  for (let i = 0; i < 10; i++) assert.equal((await call('PUT', '/api/settings', { shops: [], adminCode: 'guess' + i })).status, 403);
+  assert.equal((await call('PUT', '/api/settings', { shops: [], adminCode: 'open-sesame' })).status, 429);
+});
+
+test('the Kassalapp key and admin code are never returned', async () => {
+  const { client } = setup({ KASSAL_KEY: 'super-secret-key', ADMIN_CODE: 'open-sesame' });
+  const r = await client()('GET', '/api/state');
   assert.equal(r.body.settings.kassalKeySet, true);
   assert.ok(!JSON.stringify(r.body).includes('super-secret-key'));
-});
-
-test('change password', async () => {
-  const { client } = setup();
-  const call = client();
-  await call('POST', '/api/auth/register', { username: 'alice', password: 'password1' });
-  assert.equal((await call('POST', '/api/auth/password', { current: 'wrong-one', next: 'password2' })).status, 403);
-  assert.equal((await call('POST', '/api/auth/password', { current: 'password1', next: 'password2' })).status, 200);
-  assert.equal((await client()('POST', '/api/auth/login', { username: 'alice', password: 'password1' })).status, 401);
-  assert.equal((await client()('POST', '/api/auth/login', { username: 'alice', password: 'password2' })).status, 200);
-});
-
-test('repeated wrong passwords are throttled', async () => {
-  const { client } = setup();
-  await client()('POST', '/api/auth/register', { username: 'alice', password: 'password1' });
-  const call = client();
-  for (let i = 0; i < 10; i++) assert.equal((await call('POST', '/api/auth/login', { username: 'alice', password: 'guess' + i })).status, 401);
-  assert.equal((await call('POST', '/api/auth/login', { username: 'alice', password: 'password1' })).status, 429);
-});
-
-test('the first account inherits items tracked before accounts existed', async () => {
-  const store = memoryStore();
-  await store.set('settings', { trackedItems: [{ id: 'old-1', name: 'Kaffe', terms: ['kaffe'], exclude: [] }] });
-  const { client } = setup({}, store);
-  const r = await client()('POST', '/api/auth/register', { username: 'alice', password: 'password1' });
-  assert.deepEqual(r.body.settings.trackedItems.map((i) => i.name), ['Kaffe']);
-  assert.equal((await store.get('settings')).trackedItems, undefined);
-  const r2 = await client()('POST', '/api/auth/register', { username: 'bob', password: 'password2' });
-  assert.equal(r2.body.settings.trackedItems.length, 0);
+  assert.ok(!JSON.stringify(r.body).includes('open-sesame'));
 });
 
 test('state sends an ETag and answers 304 when unchanged', async () => {
   const { client } = setup();
   const call = client();
-  await call('POST', '/api/auth/register', { username: 'alice', password: 'password1' });
+  await call('POST', '/api/items', { name: 'Egg' });
   const r = await call('GET', '/api/state');
   const etag = r.headers.get('etag');
   assert.ok(etag);
   assert.equal((await call('GET', '/api/state', undefined, { 'if-none-match': `W/${etag}` })).status, 304);
-  await call('POST', '/api/items', { name: 'Egg' });
+  await call('POST', '/api/items', { name: 'Melk' });
   assert.equal((await call('GET', '/api/state', undefined, { 'if-none-match': etag })).status, 200);
 });
 
@@ -214,7 +165,7 @@ test('work() fetches each shop once per week and resumes after a time budget', a
   assert.equal(calls.offers.length, 3, 'no refetch within the week');
 });
 
-test('Kassalapp lookups are shared between users tracking the same thing', async (t) => {
+test('Kassalapp lookups are shared between browsers tracking the same thing', async (t) => {
   const calls = stubApis(t);
   const store = memoryStore();
   await store.set('settings', { shops: ['257bxm'], kassalKey: 'k' });
@@ -222,10 +173,8 @@ test('Kassalapp lookups are shared between users tracking the same thing', async
   const req = (path, body, cookie) => new Request(ORIGIN + path, { method: 'POST', headers: { 'content-type': 'application/json', origin: ORIGIN, ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) });
   const bg = [];
   const opts = { background: (p) => bg.push(p) };
-  for (const name of ['alice', 'bob']) {
-    const r = await app.handle(req('/api/auth/register', { username: name, password: 'password1' }), opts);
-    const cookie = r.headers.get('set-cookie').split(';')[0];
-    await app.handle(req('/api/items', { name: 'Smør' }, cookie), opts);
+  for (let n = 0; n < 2; n++) {  // two browsers
+    await app.handle(req('/api/items', { name: 'Smør' }), opts);
     await Promise.all(bg);
   }
   await app.work();

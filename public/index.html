@@ -16,26 +16,9 @@
       <h1>Tilbud Tracker</h1>
       <p id="status" class="muted">Loading…</p>
     </div>
-    <div id="account" class="account" hidden>
-      <span id="who" class="muted small nb"></span>
-      <button class="btn ghost small" type="button" id="logout">Log out</button>
-    </div>
   </header>
 
-  <section id="auth" class="auth" hidden>
-    <form id="auth-form" class="panel form">
-      <h2 id="auth-title">Log in</h2>
-      <p class="muted small">Your tracked items are saved to your account, so they follow you to any device.</p>
-      <label>Username <input name="username" autocomplete="username" required maxlength="32" autocapitalize="none" spellcheck="false"></label>
-      <label>Password <input name="password" type="password" autocomplete="current-password" required maxlength="200"></label>
-      <label id="code-label" hidden>Sign-up code <span class="muted small">Ask the person who runs this site.</span>
-        <input name="code" autocomplete="off"></label>
-      <button class="btn" type="submit" id="auth-submit">Log in</button>
-      <p class="small"><span id="auth-switch-text" class="muted">No account yet?</span> <a href="#" id="auth-switch">Create one</a></p>
-    </form>
-  </section>
-
-  <div id="app" hidden>
+  <div id="app">
 
   <nav class="tabs" role="tablist">
     <button role="tab" data-view="deals" aria-selected="true">Deals</button>
@@ -68,6 +51,7 @@
           <button class="btn ghost" type="button" id="item-cancel" hidden>Cancel</button>
         </div>
       </form>
+      <p class="muted small">Your list is saved for this browser with a cookie, so there's no login. Another browser or device, or clearing cookies, starts with an empty list.</p>
       <div id="items-toolbar" class="toolbar"></div>
       <div id="items"></div>
     </section>
@@ -81,18 +65,11 @@
     </section>
 
     <section id="view-settings" class="view" hidden>
-      <form id="pw-form" class="panel form">
-        <h2>Account</h2>
-        <p class="muted small">Logged in as <b id="acct-name"></b>. Your tracked items belong to this account. Location, shops and the Kassalapp key below are shared by everyone using this site.</p>
-        <input name="username" autocomplete="username" hidden>
-        <div class="row">
-          <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
-          <label>New password <input name="next" type="password" autocomplete="new-password" minlength="8" maxlength="200" required></label>
-        </div>
-        <button class="btn" type="submit">Change password</button>
-      </form>
-
-      <p id="admin-note" class="muted small" hidden>These shared settings can only be changed by an admin.</p>
+      <div class="panel form">
+        <h2>Shared settings</h2>
+        <p id="admin-note" class="muted small">Location, shops and the Kassalapp key apply to everyone using this site. Enter the admin code to change them.</p>
+        <label>Admin code <input id="admin-code" type="password" autocomplete="off"></label>
+      </div>
       <form id="loc-form" class="panel form">
         <h2>Location</h2>
         <p class="muted small">Offers are fetched for shops within the radius of this point.</p>

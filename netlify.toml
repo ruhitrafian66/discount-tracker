@@ -1,6 +1,6 @@
 # Netlify deploy. No build step: public/ is served as-is and the functions in
 # netlify/functions/ are bundled by Netlify (which installs @netlify/blobs).
-# Set ADMINS, SIGNUP_CODE and optionally KASSAL_KEY under Site configuration →
+# Set ADMIN_CODE and optionally KASSAL_KEY under Site configuration →
 # Environment variables (see README.md).
 [build]
   publish = "public"

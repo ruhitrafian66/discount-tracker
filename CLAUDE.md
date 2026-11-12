@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-**Branches:** `main` is the Pi build (LAN, no auth, one shared settings file); the Pi's pull-deployer follows it. `netlify` (this branch) is the Netlify build with accounts; Netlify's production branch is `netlify`. Don't merge `netlify` into `main`. Fixes to shared code (`lib/engine.js`, `lib/tjek.js`, `lib/kassal.js`, the UI) go to `main` first, then get merged into `netlify`.
+**Branches:** `main` is the Pi build (LAN, no auth, one shared settings file); the Pi's pull-deployer follows it. `netlify` (this branch) is the Netlify build where each browser keeps its own list via a cookie (no login); Netlify's production branch is `netlify`. Don't merge `netlify` into `main`. Fixes to shared code (`lib/engine.js`, `lib/tjek.js`, `lib/kassal.js`, the UI) go to `main` first, then get merged into `netlify`.
 
 Tilbud Tracker: a web app showing this week's Norwegian grocery discounts, grouped by shop, filtered to each user's tracked items. Runs self-hosted on a home server (LAN, `server.js`) and on Netlify (`netlify/`), from the same core (`lib/app.js`). See README.md for user-facing behaviour. Machine-specific details (SSH alias, host layout) are in the untracked `CLAUDE.local.md`. Never commit them: the repo is public.
 
@@ -18,10 +18,10 @@ git push origin main                       # deploys: CI passes -> server pulls 
 
 - **No npm dependencies, no build step**, with one exception: `@netlify/blobs`, imported only by `netlify/*.mjs` (Netlify installs it). `server.js`, `lib/` and tests must never require it; the Pi has no `node_modules`. The Pi runs Node 20, so use only Node 20 built-ins (global `fetch`, `Request`/`Response`, `node:test`); Netlify functions run Node 22.
 - **Storage goes through `lib/store.js`** (`get/set/del/list` of JSON documents): files in `DATA_DIR` on the Pi, Blobs on Netlify, in-memory in tests. Documents are replaced, never edited in place. `lib/app.js` is host-neutral (`Request -> Response`); keep host specifics in `server.js` / `netlify/`.
-- **Accounts:** tracked items are per user (`users/<name>`); location, shops and the Kassalapp key are shared and admin-only (`ADMINS`, else the first account). Sessions are an HttpOnly cookie whose token is stored only as a SHA-256 hash (`sessions/<hash>`). Every `/api` route except `/api/state` and `/api/auth/*` needs a session.
+- **Lists per browser, no accounts:** a random ID in an HttpOnly cookie (`tt_visitor`), set on the first save; items live in `visitors/<sha256 of ID>`, so the store never holds the cookie value. Location, shops and the Kassalapp key are shared; changing them needs `ADMIN_CODE` (locked if unset). Don't create a visitor document or cookie on reads.
 - `lib/engine.js` is pure (no I/O). All business rules live there and are tested in `test/engine.test.js`. Change a rule there, with a test, not in `server.js`.
 - Offer text comes from external APIs. In `public/app.js`, always pass it through `esc()` before putting it in `innerHTML`. Links go through `safeUrl()` (https only).
-- Write endpoints, login included, require `Content-Type: application/json` and a same-origin `Origin` (CSRF guard on top of `SameSite=Lax`). Keep that for any new mutating route.
+- Write endpoints require `Content-Type: application/json` and a same-origin `Origin` (CSRF guard on top of `SameSite=Lax`). Keep that for any new mutating route.
 - Never return the Kassalapp key to the client; the API only exposes `kassalKeySet`.
 - One popup shows every offer: `showOffer()` in `public/app.js`, used by Deals, Dropped offers and Browse. Offers that are not shown deals get their display shape from `engine.describeOffer()` (dropped entries and `/api/offers`). Add a field in both places, not per list.
 
@@ -65,7 +65,7 @@ A term word matches words that *start with* it; a leading `*` matches words that
 
 Pull-based CD (see README.md): `.github/workflows/ci.yml` runs on GitHub, and the server's `discount-tracker-deploy.timer` runs `deploy/pull-deploy.sh` every minute. That script deploys `origin/main` only once all check runs for the commit succeeded, then runs the tests, restarts, health-checks `/api/state` and rolls back on failure. Notes:
 
-- Netlify deploys from the same push (Netlify's Git integration, `netlify.toml`); its secrets (`ADMINS`, `SIGNUP_CODE`, `KASSAL_KEY`) live in Netlify's environment variables, never in the repo.
+- Netlify deploys from the same push (Netlify's Git integration, `netlify.toml`); its secrets (`ADMIN_CODE`, `KASSAL_KEY`) live in Netlify's environment variables, never in the repo.
 - To deploy, push to main. There is no push-based deploy script, and the server must never need inbound access or GitHub secrets.
 - `pull-deploy.sh` reinstalls itself and the units from the repo on each deploy, so changes to them ship like code. Keep its body inside `main()`: bash reads scripts lazily, and the file is replaced while running.
 - Host-specific values belong in `/etc/discount-tracker/env` on the server (template: `deploy/env.example`), not in tracked files. nginx config is rendered from `deploy/nginx.conf.template`.
