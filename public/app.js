@@ -432,6 +432,24 @@ $('#kassal-clear').addEventListener('click', async () => {
   try { setState(await saveSettings({ kassalKey: '' })); toast('Key removed'); } catch (err) { toast(err.message); }
 });
 
+// ---- theme ----
+// Light by default; the toggle switches to dark and remembers it in this browser.
+function applyTheme(dark) {
+  const root = document.documentElement;
+  if (dark) root.dataset.theme = 'dark'; else delete root.dataset.theme;
+  const meta = document.querySelector('meta[name=theme-color]');
+  if (meta) meta.content = dark ? '#0e1411' : '#f6efe2';
+  const btn = $('#theme-toggle');
+  btn.setAttribute('aria-pressed', String(dark));
+  btn.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+}
+$('#theme-toggle').addEventListener('click', () => {
+  const dark = document.documentElement.dataset.theme !== 'dark';
+  applyTheme(dark);
+  try { localStorage.setItem('theme', dark ? 'dark' : 'light'); } catch { /* private mode: not remembered */ }
+});
+applyTheme(document.documentElement.dataset.theme === 'dark');
+
 // ---- tabs ----
 function show(view) {
   document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.view === view)));
