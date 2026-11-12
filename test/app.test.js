@@ -99,12 +99,41 @@ test('shared settings need ADMIN_CODE, and are locked without one', async () => 
 
   const { client } = setup({ ADMIN_CODE: 'open-sesame' });
   const a = client(), b = client();
-  assert.equal((await a('PUT', '/api/settings', { shops: [] })).status, 403);
-  assert.equal((await a('PUT', '/api/settings', { shops: [], adminCode: 'nope' })).status, 403);
-  const r = await a('PUT', '/api/settings', { shops: ['257bxm'], adminCode: 'open-sesame' });
+  const bergen = { name: 'Bergen', lat: 60.3913, lng: 5.3221, radiusKm: 10 };
+  assert.equal((await a('PUT', '/api/settings', { location: bergen })).status, 403);
+  assert.equal((await a('PUT', '/api/settings', { location: bergen, adminCode: 'nope' })).status, 403);
+  const r = await a('PUT', '/api/settings', { location: bergen, adminCode: 'open-sesame' });
   assert.equal(r.status, 200);
   assert.equal(r.body.settings.adminCodeSet, true);
-  assert.deepEqual((await b('GET', '/api/state')).body.settings.shops, ['257bxm'], 'shared by everyone');
+  assert.equal((await b('GET', '/api/state')).body.settings.location.name, 'Bergen', 'shared by everyone');
+});
+
+test('nobody can set the Kassalapp key through the API, not even with the admin code', async () => {
+  const { client, store } = setup({ ADMIN_CODE: 'open-sesame' });
+  const call = client();
+  const r = await call('PUT', '/api/settings', { kassalKey: 'attacker-key', adminCode: 'open-sesame' });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.settings.kassalKeySet, false);
+  assert.ok(!((await store.get('settings')) || {}).kassalKey, 'no key stored');
+});
+
+test('each browser picks its own shops, without the admin code', async () => {
+  const { client, store } = setup({ ADMIN_CODE: 'open-sesame' });
+  const a = client(), b = client();
+  const all = (await a('GET', '/api/state')).body.settings.shops;
+  assert.equal(all.length, 13, 'default: every grocery chain');
+  const r = await a('PUT', '/api/shops', { shops: ['257bxm', 'faa0Ym', 'not-a-shop'] });
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('set-cookie'), /^tt_visitor=/);
+  assert.deepEqual(r.body.settings.shops, ['257bxm', 'faa0Ym'], 'unknown ids dropped');
+  assert.deepEqual((await a('GET', '/api/state')).body.settings.shops, ['257bxm', 'faa0Ym']);
+  assert.equal((await b('GET', '/api/state')).body.settings.shops.length, 13, 'others keep the default');
+  // Shared settings no longer change shops.
+  await a('PUT', '/api/settings', { shops: [], adminCode: 'open-sesame' });
+  assert.equal((await store.get('settings')).shops.length, 13, 'default list unchanged');
+  assert.equal((await b('GET', '/api/state')).body.settings.shops.length, 13);
+  // Same CSRF guard as other writes.
+  assert.equal((await b('PUT', '/api/shops', { shops: [] }, { origin: 'https://evil.test' })).status, 403);
 });
 
 test('wrong admin codes are throttled', async () => {
@@ -157,12 +186,33 @@ test('work() fetches each shop once per week and resumes after a time budget', a
   const store = memoryStore();
   await store.set('settings', { shops: ['257bxm', 'faa0Ym', '4333pm'] });
   const app = createApp({ store, env: {}, log: quiet });
+  // Every grocery chain is fetched (anyone may pick any of them): 13 shops.
   await app.work({ budgetMs: 40 });  // time for about two shops
-  assert.ok(calls.offers.length < 3, `stopped early (${calls.offers.length})`);
+  assert.ok(calls.offers.length < 13, `stopped early (${calls.offers.length})`);
   await app.work();
-  assert.deepEqual([...calls.offers].sort(), ['257bxm', '4333pm', 'faa0Ym']);
+  assert.equal(new Set(calls.offers).size, 13);
+  assert.equal(calls.offers.length, 13, 'each shop once');
   await app.work();
-  assert.equal(calls.offers.length, 3, 'no refetch within the week');
+  assert.equal(calls.offers.length, 13, 'no refetch within the week');
+});
+
+test('picking a chain that is not fetched yet adds it to the fetch; browse shows only my shops', async (t) => {
+  const calls = stubApis(t);
+  t.mock.method(tjek, 'discoverDealers', async () => [{ id: 'jula01', name: 'Jula' }]);
+  const store = memoryStore();
+  await store.set('settings', { shops: ['257bxm'] });
+  const app = createApp({ store, env: {}, log: quiet });
+  await app.work();
+  assert.ok(!calls.offers.includes('jula01'));
+  const bg = [];
+  const req = (method, path, body, cookie) => new Request(ORIGIN + path, { method, headers: { 'content-type': 'application/json', origin: ORIGIN, ...(cookie ? { cookie } : {}) }, body: body && JSON.stringify(body) });
+  const r = await app.handle(req('PUT', '/api/shops', { shops: ['jula01'] }), { background: (p) => bg.push(p) });
+  await Promise.all(bg);
+  assert.ok(calls.offers.includes('jula01'), 'fetched off-schedule, once');
+  assert.deepEqual((await store.get('flags')).wantedShops, ['jula01']);
+  const cookie = r.headers.get('set-cookie').split(';')[0];
+  const browse = await (await app.handle(new Request(ORIGIN + '/api/offers', { headers: { cookie } }))).json();
+  assert.equal(browse.offers.length, 1, 'only the offer from my one shop');
 });
 
 test('Kassalapp lookups are shared between browsers tracking the same thing', async (t) => {

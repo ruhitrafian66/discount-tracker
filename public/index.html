@@ -77,9 +77,16 @@
     </section>
 
     <section id="view-settings" class="view" hidden>
+      <form id="shops-form" class="panel form">
+        <h2>Your shops</h2>
+        <p class="muted small">Only these shops are compared: both for discounts and for "another shop's regular price is cheaper". Your choice is saved in this browser, like your tracked items.</p>
+        <div id="shops" class="checks"></div>
+        <button class="btn" type="submit">Save shops</button>
+      </form>
+
       <div class="panel form">
-        <h2>Shared settings</h2>
-        <p id="admin-note" class="muted small">Location, shops and the Kassalapp key apply to everyone using this site. Enter the admin code to change them.</p>
+        <h2>Shared location</h2>
+        <p id="admin-note" class="muted small">The location applies to everyone using this site. Enter the admin code to change it.</p>
         <label>Admin code <input id="admin-code" type="password" autocomplete="off"></label>
       </div>
       <form id="loc-form" class="panel form">
@@ -94,23 +101,7 @@
         <button class="btn" type="submit">Save location</button>
       </form>
 
-      <form id="shops-form" class="panel form">
-        <h2>Shops</h2>
-        <p class="muted small">Only these shops are compared: both for discounts and for "another shop's regular price is cheaper".</p>
-        <div id="shops" class="checks"></div>
-        <button class="btn" type="submit">Save shops</button>
-      </form>
 
-      <form id="kassal-form" class="panel form">
-        <h2>Regular prices (Kassalapp)</h2>
-        <p class="muted small">Flyers only show a regular price on about 30% of offers. With a free <a href="https://kassal.app/api" target="_blank" rel="noopener">Kassalapp API key</a>, the app also looks up each chain's shelf price. That gives more offers a reference price, and lets the app drop "deals" that are dearer than another shop's normal price.</p>
-        <p id="kassal-state" class="small"></p>
-        <label>API key <input name="key" type="password" autocomplete="off" placeholder="Paste key to set or replace"></label>
-        <div class="row">
-          <button class="btn" type="submit">Save key</button>
-          <button class="btn ghost" type="button" id="kassal-clear">Remove key</button>
-        </div>
-      </form>
     </section>
   </main>
   </div>

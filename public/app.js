@@ -371,17 +371,13 @@ $('#browse').addEventListener('click', (e) => {
 
 // ---- settings ----
 function renderSettings() {
-  const { location, shops, kassalKeySet, kassalKeyFromEnv, adminCodeSet } = state.settings;
-  // Without ADMIN_CODE on the server, shared settings are read-only.
+  const { location, shops, adminCodeSet } = state.settings;
+  // The location is shared: it needs the admin code, and is read-only without ADMIN_CODE.
   $('#admin-code').closest('label').hidden = !adminCodeSet;
   $('#admin-note').textContent = adminCodeSet
-    ? 'Location, shops and the Kassalapp key apply to everyone using this site. Enter the admin code to change them.'
-    : 'Location, shops and the Kassalapp key apply to everyone using this site. They are locked: set ADMIN_CODE on the server to change them.';
-  for (const f of ['#loc-form', '#shops-form', '#kassal-form']) {
-    $(f).querySelectorAll('input, select, button').forEach((el) => { el.disabled = !adminCodeSet; });
-  }
-  $('#kassal-form').key.closest('label').hidden = kassalKeyFromEnv;
-  $('#kassal-form').querySelector('.row').hidden = kassalKeyFromEnv;
+    ? 'The location applies to everyone using this site. Enter the admin code to change it.'
+    : 'The location applies to everyone using this site. It is locked: set ADMIN_CODE on the server to change it.';
+  $('#loc-form').querySelectorAll('input, select, button').forEach((el) => { el.disabled = !adminCodeSet; });
   const lf = $('#loc-form');
   if (!lf.contains(document.activeElement)) {
     lf.preset.innerHTML = '<option value="">Custom…</option>' + CITIES.map(([n]) => `<option${n === location.name ? ' selected' : ''}>${esc(n)}</option>`).join('');
@@ -394,13 +390,9 @@ function renderSettings() {
     const groc = state.dealers.filter((d) => d.grocery), other = state.dealers.filter((d) => !d.grocery).sort((a, b) => a.name.localeCompare(b.name, 'nb'));
     $('#shops').innerHTML = '<h3>Grocery</h3>' + groc.map(box).join('') + (other.length ? '<h3>Other chains with offers near you</h3>' + other.map(box).join('') : '');
   }
-  const st = state.status;
-  $('#kassal-state').innerHTML = kassalKeySet
-    ? (st.kassalError ? `⚠️ ${esc(st.kassalError)}` : `✅ Key set${kassalKeyFromEnv ? ' on the server' : ''}${st.kassalRefreshing ? ' · looking up prices…' : ` · prices cached for ${st.kassalItems} search${st.kassalItems === 1 ? '' : 'es'}`}`)
-    : 'No key set. Reference prices come from the flyers only.';
 }
 
-// Shared settings need the admin code; it stays in the page, never stored.
+// The shared location needs the admin code; it stays in the page, never stored.
 function saveSettings(body) {
   return call('PUT', '/api/settings', { ...body, adminCode: $('#admin-code').value });
 }
@@ -420,16 +412,7 @@ $('#loc-form').addEventListener('submit', async (e) => {
 $('#shops-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const shops = [...e.target.querySelectorAll('input[name=shop]:checked')].map((i) => i.value);
-  try { setState(await saveSettings({ shops })); toast('Shops saved'); } catch (err) { toast(err.message); }
-});
-$('#kassal-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const key = e.target.key.value.trim();
-  if (!key) return toast('Paste a key first');
-  try { setState(await saveSettings({ kassalKey: key })); e.target.key.value = ''; toast('Key saved. Looking up regular prices…'); } catch (err) { toast(err.message); }
-});
-$('#kassal-clear').addEventListener('click', async () => {
-  try { setState(await saveSettings({ kassalKey: '' })); toast('Key removed'); } catch (err) { toast(err.message); }
+  try { setState(await call('PUT', '/api/shops', { shops })); toast('Your shops saved'); } catch (err) { toast(err.message); }
 });
 
 // ---- theme ----

@@ -8,7 +8,11 @@ Web app that shows this week's grocery discounts in Norway, grouped by shop, for
 
 There are no accounts. The first time you save a tracked item, the site sets an `HttpOnly`, `SameSite=Lax` cookie (`Secure` over https) with a random ID. Your list is stored on the server under a hash of that ID, so the same browser gets the same list back. A different browser or device, or clearing cookies, starts with an empty list. The cookie lasts 400 days, the most browsers allow, and every save renews it. Lists not saved for longer than that are deleted.
 
-Location, shops and the Kassalapp key are shared by everyone on the site. Changing them needs the admin code (`ADMIN_CODE`), typed in under Settings. Without `ADMIN_CODE` they are locked.
+Your shops are yours too: tick the chains you shop at under **Settings → Your shops**. Only those are compared, for discounts and for "another shop's regular price is cheaper", and the choice is saved for this browser. Every grocery chain is fetched once a week anyway. Picking one of the "other chains" adds it to the weekly fetch, and it's fetched once right away.
+
+The location is shared by everyone on the site. Changing it needs the admin code (`ADMIN_CODE`), typed in under Settings. Without `ADMIN_CODE` it is locked.
+
+There is no Kassalapp setting in the app. The key can only be set as the `KASSAL_KEY` environment variable on Netlify, so visitors can neither see nor change it.
 
 ## Rules
 
@@ -105,7 +109,7 @@ One-time setup:
 
 1. In Netlify: **Add new site → Import an existing project**, then pick this GitHub repo. The build settings come from `netlify.toml`.
 2. Before the first deploy, under **Site configuration → Environment variables**, set:
-   - `ADMIN_CODE`: a code for changing location, shops and the Kassalapp key (without it they're locked),
+   - `ADMIN_CODE`: a code for changing the shared location (without it, it's locked),
    - optionally `KASSAL_KEY`, and `FETCH_WEEKDAY` / `FETCH_HOUR`.
 3. Deploy, open the site, then set location and shops under Settings with the admin code.
 
