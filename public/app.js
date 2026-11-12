@@ -102,8 +102,18 @@ function renderDeals() {
     : '<p class="muted small">Nothing dropped.</p>';
 }
 
+// The chain's brand colour tints its card. It comes from the offer API, so only a
+// plain 6-digit hex is accepted; near-white colours (REMA 1000) keep the app green.
+function brandStyle(color) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(color || '');
+  if (!m) return '';
+  const n = parseInt(m[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  if (0.2126 * r + 0.7152 * g + 0.0722 * b > 225) return '';
+  return ` style="--brand:#${m[1]}"`;
+}
+
 function shopHtml(shop) {
-  return `<details class="shop" open>
+  return `<details class="shop" open${brandStyle(shop.color)}>
     <summary>
       ${shop.logo ? `<img class="logo" src="${esc(shop.logo)}" alt="" loading="lazy">` : ''}
       <span class="who"><span class="name">${esc(shop.name)}</span><span class="count">${shop.items.length} deal${shop.items.length === 1 ? '' : 's'}</span></span>
