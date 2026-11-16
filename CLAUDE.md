@@ -29,6 +29,7 @@ Opening the app must stay fast; `/api/state` once took 2.7 s there. Rules that k
 - `server.js` caches the week's offers and the serialised state (`cached()`, keyed on `rev`). Anything that changes what the view shows must call `touch()`, or the old view keeps being served; write a file only when its content changed. The cache also expires after 5 minutes because "this week" depends on the clock.
 - Never construct `Intl.DateTimeFormat` per offer or per request; use `osloParts()` in the engine. Pass a precomputed `end` to `isThisWeek()` when filtering.
 - `fold()`, `words()` and `termWords()` are memoised per string, and `compileItem()` per item object. Tracked items are replaced, never edited in place, so that cache stays valid; keep it that way. Do not mutate arrays returned by `words()`.
+- The page paints the last state it saw from `localStorage` (`SEEN` in `public/app.js`) before the fresh one arrives. Bump the number in `SEEN` when the shape of `/api/state` changes, so an old copy is not rendered.
 - Static files and `/api/state` send ETags; nginx gzips JS, CSS and JSON (in `deploy/nginx.conf.template`, applied by `setup-server.sh`, not by the pull deploy).
 
 ## The user's rules (do not weaken)

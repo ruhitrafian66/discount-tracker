@@ -32,7 +32,24 @@ function toast(msg) {
   clearTimeout(toast.t); toast.t = setTimeout(() => { t.hidden = true; }, 3500);
 }
 
+// The last state this browser saw is kept in localStorage and painted at once on the
+// next visit, while the fresh one loads. Bump the number when the state's shape changes.
+const SEEN = 'state:1';
+function remember(s) {
+  try { localStorage.setItem(SEEN, JSON.stringify(s)); } catch { /* private mode or full: not remembered */ }
+}
+function showRemembered() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SEEN));
+    if (s) setState(s);
+  } catch {
+    // Unreadable, or from a version with another shape: drop it and wait for the server.
+    try { localStorage.removeItem(SEEN); } catch { /* nothing to drop */ }
+  }
+}
+
 async function load() {
+  if (!state) showRemembered();
   try {
     setState(await call('GET', '/api/state'));
   } catch (e) {
@@ -42,6 +59,7 @@ async function load() {
 
 function setState(s) {
   state = s;
+  remember(s);
   renderStatus(); renderDeals(); renderItems(); renderSettings();
   clearTimeout(pollTimer);
   if (s.status.refreshing || s.status.kassalRefreshing) pollTimer = setTimeout(load, 3000);
@@ -88,6 +106,9 @@ function renderDeals() {
   }
   if (status.errors && status.errors.length) {
     el.insertAdjacentHTML('beforeend', `<p class="muted small">Some shops failed to load: ${status.errors.map(esc).join('; ')}</p>`);
+  }
+  if (status.kassalError) {
+    el.insertAdjacentHTML('beforeend', `<p class="muted small">Regular prices could not be looked up: ${esc(status.kassalError)}</p>`);
   }
 
   $('#dropped-count').textContent = result.dropped.length;
