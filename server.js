@@ -319,12 +319,10 @@ async function api(req, res, url) {
   if (m === 'GET' && p === '/api/offers') {
     // Same word rules as tracked items, so a search here previews what a term would match.
     const q = engine.norm(url.searchParams.get('q')).slice(0, 100);
-    const hits = weekOffers()
-      .filter((o) => !q || engine.termMatches(q, o.heading, o.description))
-      .sort((a, b) => a.heading.localeCompare(b.heading, 'nb'))
-      .slice(0, 300)
-      .map(engine.describeOffer);
-    return send(res, 200, { offers: hits });
+    // ?shops=id,id narrows the offers to those shops; `shops` in the answer lists every
+    // shop with offers and its number of matches, for the filter on the Browse page.
+    const only = (url.searchParams.get('shops') || '').split(',');
+    return send(res, 200, engine.browse(weekOffers(), q, only));
   }
 
   if (m === 'PUT' && p === '/api/settings') {

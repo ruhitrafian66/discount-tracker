@@ -31,7 +31,7 @@ The Deals page groups deals by shop, with the shop where you save the most krone
 - Exclude words drop an offer if they appear anywhere in its title.
 - Spelling of æ/ø/å doesn't matter: `kjottdeig` matches KJØTTDEIG.
 
-Use **Browse offers** to try terms out. It uses the same matching rules.
+Use **Browse offers** to try terms out. It uses the same matching rules. The shop buttons under the search box narrow the list to the shops you pick (none picked means all of them), and each shows how many offers match the search there.
 
 ## Data sources
 
