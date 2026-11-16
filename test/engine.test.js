@@ -236,6 +236,33 @@ test('a dropped offer carries the details needed to show it', () => {
   assert.equal(r.dropped.find((x) => x.shop === 'Extra').regular, null);
 });
 
+test('browse: a search lists its matches by heading and counts them per shop', () => {
+  const at = (id, o) => ({ ...o, dealer_id: id });
+  const offers = [
+    at('k', offer('KIWI', 'Smør', 39.9)), at('k', offer('KIWI', 'Egg 12 stk', 29.9)),
+    at('r', offer('REMA 1000', 'Meierismør', 44.9)), at('r', offer('REMA 1000', 'Brød', 19.9)),
+    at('m', offer('MENY', 'Laks', 99)),
+  ];
+  const headings = (r) => r.offers.map((o) => o.heading);
+  const order = offers.map((o) => o.id);
+
+  let r = E.browse(offers, '');
+  assert.deepEqual(headings(r), ['Brød', 'Egg 12 stk', 'Laks', 'Meierismør', 'Smør']);
+  assert.deepEqual(r.shops, [{ id: 'k', name: 'KIWI', count: 2 }, { id: 'r', name: 'REMA 1000', count: 2 }, { id: 'm', name: 'MENY', count: 1 }]);
+  assert.deepEqual(offers.map((o) => o.id), order, 'the list passed in (a cache) is not reordered');
+
+  // Only some shops: fewer offers, the same counts. A shop without a match stays listed.
+  r = E.browse(offers, '*smør', ['r']);
+  assert.deepEqual(r.offers.map((o) => [o.shop, o.heading]), [['REMA 1000', 'Meierismør']]);
+  assert.deepEqual(r.shops.map((s) => [s.name, s.count]), [['KIWI', 1], ['REMA 1000', 1], ['MENY', 0]]);
+  assert.deepEqual(headings(E.browse(offers, '', ['k', 'm'])), ['Egg 12 stk', 'Laks', 'Smør']);
+
+  // An id that is no shop here (no longer selected, or ''): ignored, not "nothing matches".
+  assert.deepEqual(headings(E.browse(offers, 'smør', ['gone', ''])), ['Smør']);
+  assert.deepEqual(headings(E.browse(offers, '', ['gone', 'm'])), ['Laks']);
+  assert.deepEqual(E.browse([], 'smør', ['k']), { offers: [], shops: [] });
+});
+
 test('isThisWeek gives the same answer with a precomputed week end', () => {
   const end = E.endOfWeek(NOW);
   const cases = [

@@ -61,7 +61,7 @@ Offers are fetched once per week (`engine.fetchSlots`, default Monday 01:00 Oslo
 
 Matching is accent-insensitive via `fold()` (ø→o, æ→ae, å→a). Kassalapp searches use the spelling seen in flyer headings (`searchTerms`), because Kassalapp search is spelling-exact. Kassalapp products are filtered by category when one matches the item (`relevantProducts`); otherwise dishes like "Grandiosa Pizza Kjøttdeig" pass as cheaper regular prices.
 
-A term is cut into words the way offer text is, at anything that is not a letter or digit (`coca-cola` = `coca cola`, `14%` = `14`). A term word matches words that *start with* it; a leading `*` matches words that *end with* it (Norwegian compounds: `*smør` → meierismør). Plain substring matching was tried and rejected ("egg" hit "pålegg", "truseinnlegg"). All words of a term must appear, at least one in the title. Exclude words are a substring match on the title. Browse search uses the same `termMatches`.
+A term is cut into words the way offer text is, at anything that is not a letter or digit (`coca-cola` = `coca cola`, `14%` = `14`). A term word matches words that *start with* it; a leading `*` matches words that *end with* it (Norwegian compounds: `*smør` → meierismør). Plain substring matching was tried and rejected ("egg" hit "pålegg", "truseinnlegg"). All words of a term must appear, at least one in the title. Exclude words are a substring match on the title. Browse search uses the same `termMatches`, in `engine.browse()`, which also counts the matches per shop for the shop filter on that page (`/api/offers?q=&shops=id,id`).
 
 ## Deployment
 
@@ -81,7 +81,7 @@ Do not commit IPs, hostnames/SSH aliases, other services on the server, keys, or
 
 Delete an entry in the commit that fixes it. Counts come from one week of live Oslo data (637 offers, 812 cached Kassalapp products).
 
-- **B15** `public/app.js`: every re-render re-opens collapsed shop cards; Browse responses can arrive out of order and are not refreshed after the shops change.
+- **B15** `public/app.js`: every re-render re-opens collapsed shop cards.
 - **B16** `deploy/pull-deploy.sh`: a commit with no check runs (`[skip ci]`) reads as pending forever, so the server polls the GitHub API every minute. Found by reading.
 
 Stale docs: the server's disk is no longer nearly full. Node 20 on the Pi passed end-of-life on 2026-04-30.

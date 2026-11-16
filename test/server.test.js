@@ -11,13 +11,27 @@ const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'tilbud-test-'));
 const DATA_DIR = tmpDir();
 process.env.DATA_DIR = DATA_DIR;
 process.env.DISABLE_FETCH = '1';
-const { server } = require('../server');
-const tjek = require('../lib/tjek');
 
 // The Pi build keeps one shared list in settings.json. The Netlify build (lib/app.js)
 // keeps a list per browser; its storage and refresh are tested in app.test.js.
 const PI_BUILD = !fs.existsSync(path.join(__dirname, '../lib/app.js'));
 const piOnly = { skip: PI_BUILD ? false : 'Pi build only' };
+
+// Two shops with offers for the Browse test, valid whenever the tests run. The server
+// reads the file when it starts. (The Netlify build stores offers in another shape; its
+// Browse route is tested in app.test.js.)
+const browseOffer = (id, dealer_id, shop, heading) => ({
+  id, heading, description: '', pricing: { price: 10, pre_price: null }, dealer_id, dealer: { name: shop, logo: '', color: '' },
+  quantity: { unit: { symbol: 'g' }, size: { from: 500, to: 500 }, pieces: { from: 1, to: 1 } }, images: { thumb: '' },
+  run_from: new Date(Date.now() - 86400e3).toISOString(), run_till: new Date(Date.now() + 86400e3).toISOString(),
+});
+if (PI_BUILD) fs.writeFileSync(path.join(DATA_DIR, 'offers.json'), JSON.stringify({ v: 2, fetchedAt: Date.now(), locKey: '', discovered: [], errors: [], byDealer: {
+  '257bxm': [browseOffer('a', '257bxm', 'KIWI', 'Smør'), browseOffer('b', '257bxm', 'KIWI', 'Egg')],
+  faa0Ym: [browseOffer('c', 'faa0Ym', 'REMA 1000', 'Meierismør')],
+} }));
+
+const { server } = require('../server');
+const tjek = require('../lib/tjek');
 
 let base;
 test.before(() => new Promise((resolve) => {
@@ -71,6 +85,18 @@ test('a write that fails changes nothing, and the next one works', piOnly, async
   assert.ok(after.includes('saved after'));
   assert.ok(!after.includes('not saved'), 'the failed item did not linger in memory');
   assert.deepEqual(fs.readdirSync(DATA_DIR).filter((f) => f.endsWith('.tmp')), [], 'no temp files left');
+});
+
+test('Browse lists the offers, and ?shops= narrows them to those shops', piOnly, async () => {
+  const browse = async (query) => {
+    const r = await (await fetch(base + '/api/offers' + query)).json();
+    return [r.offers.map((o) => o.heading), r.shops.map((s) => `${s.name} ${s.count}`)];
+  };
+  assert.deepEqual(await browse(''), [['Egg', 'Meierismør', 'Smør'], ['KIWI 2', 'REMA 1000 1']]);
+  assert.deepEqual(await browse('?shops=faa0Ym'), [['Meierismør'], ['KIWI 2', 'REMA 1000 1']]);
+  assert.deepEqual(await browse('?q=sm%C3%B8r&shops=257bxm,faa0Ym'), [['Smør'], ['KIWI 1', 'REMA 1000 0']]);
+  assert.deepEqual(await browse('?q=*sm%C3%B8r&shops='), [['Meierismør', 'Smør'], ['KIWI 1', 'REMA 1000 1']]);
+  assert.deepEqual(await browse('?shops=nope'), [['Egg', 'Meierismør', 'Smør'], ['KIWI 2', 'REMA 1000 1']]);
 });
 
 test('a write from another origin is refused, also when the Origin cannot be parsed', async () => {

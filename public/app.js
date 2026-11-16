@@ -60,6 +60,7 @@ async function load() {
 
 function setState(s) {
   clearTimeout(pollTimer);
+  const browseChanged = state && browseScope(state) !== browseScope(s);
   state = s;
   remember(s);
   renderStatus(); renderDeals(); renderItems(); renderSettings();
@@ -69,6 +70,7 @@ function setState(s) {
     pollTimer = setTimeout(load, pollDelay);
     pollDelay = Math.min(pollDelay * 1.5, 60000);
   } else pollDelay = 3000;
+  if (browseChanged) refreshBrowse();
 }
 
 // ---- status ----
@@ -357,14 +359,26 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ---- browse ----
+// A search box and one toggle per shop that has offers; no shop picked means all of them.
+// The list is loaded when the page is first opened, and again when the search, the picked
+// shops, or what it is drawn from (the user's shops, the week's offers) changes.
+const browseScope = (s) => JSON.stringify([s.settings.shops, s.status.fetchedAt, s.status.offerCount]);
+const pickedShops = new Set();
+let browseOffers = [], browseShops = [];
+let browseSeq = 0, browseStale = true;
 let browseTimer;
 $('#q').addEventListener('input', () => { clearTimeout(browseTimer); browseTimer = setTimeout(browse, 250); });
-let browseOffers = [];
+
 async function browse() {
-  const q = $('#q').value.trim();
+  const seq = ++browseSeq;
+  browseStale = false;
   const el = $('#browse');
   try {
-    browseOffers = (await call('GET', '/api/offers?q=' + encodeURIComponent(q))).offers;
+    const data = await call('GET', '/api/offers?' + new URLSearchParams({ q: $('#q').value.trim(), shops: [...pickedShops].join(',') }));
+    if (seq !== browseSeq) return;  // a newer search was started meanwhile; its answer is the one to show
+    browseOffers = data.offers;
+    renderShopFilter(data.shops);
+    const matches = data.shops.reduce((n, s) => n + (!pickedShops.size || pickedShops.has(s.id) ? s.count : 0), 0);
     el.innerHTML = browseOffers.length ? browseOffers.map((o, n) => `<div class="offer" data-offer="${n}">
       ${o.image ? `<img src="${esc(o.image)}" alt="" loading="lazy">` : '<div></div>'}
       <div>
@@ -372,9 +386,45 @@ async function browse() {
         <div class="desc">${esc(o.description)}</div>
         <div class="foot"><span><b class="nb">${kr(o.price)}</b> <span class="muted small"><span class="nb">${esc(o.shop)}</span>${o.regular ? ` · <span class="nb">før ${kr(o.regular.price)}</span>` : ''}</span></span>
           <button class="btn ghost small" type="button" data-track="${esc(o.heading)}">+ Track</button></div>
-      </div></div>`).join('') : '<p class="muted">No offers match.</p>';
-  } catch (err) { browseOffers = []; el.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+      </div></div>`).join('')
+      + (matches > browseOffers.length ? `<p class="muted small more">Showing the first ${browseOffers.length} of ${matches} offers. Search or pick a shop to narrow it down.</p>` : '')
+      : '<p class="muted">No offers match.</p>';
+  } catch (err) {
+    if (seq !== browseSeq) return;
+    browseOffers = []; browseStale = true;  // tried again when the page is next opened
+    el.innerHTML = `<p class="muted">${esc(err.message)}</p>`;
+  }
 }
+// Reloads the list now if it is on screen, otherwise when it is next opened.
+function refreshBrowse() {
+  browseStale = true;
+  if (!$('#view-browse').hidden) browse();
+}
+
+// `shops` is what the server found: [{ id, name, count }], count = offers matching the search.
+function renderShopFilter(shops) {
+  browseShops = shops;
+  for (const id of [...pickedShops]) if (!shops.some((s) => s.id === id)) pickedShops.delete(id);
+  const el = $('#shop-filter');
+  const focused = el.contains(document.activeElement) ? document.activeElement.dataset.shop : null;
+  const chip = (id, name, count, on) => `<button type="button" data-shop="${esc(id)}" aria-pressed="${on}"${count ? '' : ' class="none"'}>${esc(name)} <span class="n">${count}</span></button>`;
+  el.hidden = shops.length < 2;
+  el.innerHTML = chip('', 'All', shops.reduce((n, s) => n + s.count, 0), !pickedShops.size)
+    + shops.map((s) => chip(s.id, s.name, s.count, pickedShops.has(s.id))).join('');
+  // The buttons were replaced: keep the keyboard focus on the one that had it.
+  const again = focused != null && [...el.children].find((b) => b.dataset.shop === focused);
+  if (again) again.focus();
+}
+$('#shop-filter').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-shop]');
+  if (!b) return;
+  const id = b.dataset.shop;
+  if (!id) pickedShops.clear();
+  else if (!pickedShops.delete(id)) pickedShops.add(id);
+  renderShopFilter(browseShops);  // show the choice at once; the list and counts follow
+  clearTimeout(browseTimer);
+  browse();
+});
 function startTracking(heading) {
   const name = heading.toLowerCase().replace(/\s+/g, ' ').trim();
   // The terms field is comma-separated: a comma kept from the heading would split it
@@ -462,7 +512,7 @@ function show(view) {
   document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.view === view)));
   document.querySelectorAll('.view').forEach((v) => { v.hidden = v.id !== 'view-' + view; });
   if (location.hash !== '#' + view) history.replaceState(null, '', '#' + view);
-  if (view === 'browse' && !$('#browse').children.length) browse();
+  if (view === 'browse' && browseStale) browse();
 }
 document.querySelector('.tabs').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) show(b.dataset.view); });
 document.addEventListener('click', (e) => { const a = e.target.closest('[data-go]'); if (a) { e.preventDefault(); show(a.dataset.go); } });

@@ -219,6 +219,25 @@ test('picking a chain that is not fetched yet adds it to the fetch; browse shows
   assert.equal(browse.offers.length, 1, 'only the offer from my one shop');
 });
 
+test('browse: ?shops= narrows the list to some of my shops, never to a shop that is not mine', async (t) => {
+  stubApis(t);
+  const store = memoryStore();
+  await store.set('settings', { shops: ['257bxm', 'faa0Ym', '4333pm'] });
+  const app = createApp({ store, env: {}, log: quiet });
+  await app.work();  // every grocery chain is fetched, one offer each
+  const browse = async (query) => {
+    const r = await (await app.handle(new Request(ORIGIN + '/api/offers' + query))).json();
+    return [r.offers.map((o) => o.id), r.shops.map((s) => `${s.id} ${s.count}`)];
+  };
+  const mine = ['257bxm 1', 'faa0Ym 1', '4333pm 1'];
+  assert.deepEqual(await browse(''), [['o-257bxm', 'o-faa0Ym', 'o-4333pm'], mine]);
+  assert.deepEqual(await browse('?shops=faa0Ym'), [['o-faa0Ym'], mine]);
+  assert.deepEqual(await browse('?q=tine&shops=4333pm,257bxm'), [['o-257bxm', 'o-4333pm'], mine]);
+  // Bunnpris is fetched too, but is not one of this browser's shops: ignored.
+  assert.deepEqual(await browse('?shops=5b11sm'), [['o-257bxm', 'o-faa0Ym', 'o-4333pm'], mine]);
+  assert.deepEqual(await browse('?q=egg&shops=faa0Ym'), [[], ['257bxm 0', 'faa0Ym 0', '4333pm 0']]);
+});
+
 test('Kassalapp lookups are shared between browsers tracking the same thing', async (t) => {
   const calls = stubApis(t);
   const store = memoryStore();
