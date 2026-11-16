@@ -7,7 +7,7 @@ Tilbud Tracker: a web app showing this week's Norwegian grocery discounts, group
 ## Commands
 
 ```sh
-node --test test/*.test.js                 # unit tests (engine rules)
+node --test test/*.test.js                 # engine rules, fetcher, server.js over HTTP
 DATA_DIR=/tmp/dt PORT=3913 node server.js  # run locally; keep DATA_DIR out of the repo
 git push origin main                       # deploys: CI passes -> server pulls within ~1 min
 ```
@@ -32,6 +32,7 @@ Opening the app must stay fast; `/api/state` once took 2.7 s there. Rules that k
 - `lib/app.js` caches the week's offers (keyed on `rev`) and each user's serialised state (keyed on `rev` + the user's `rev`). Shared data must change through `saveGlobal()` and user data through `saveUser()`, or the old view keeps being served. The caches also expire after 5 minutes because "this week" depends on the clock. On the Pi the file store keeps every document in memory; on Netlify shared data is re-read after `globalTtlMs` (60 s).
 - Never construct `Intl.DateTimeFormat` per offer or per request; use `osloParts()` in the engine. Pass a precomputed `end` to `isThisWeek()` when filtering.
 - `fold()`, `words()` and `termWords()` are memoised per string, and `compileItem()` and the Kassalapp `termsKeyFor()` per item object. Tracked items are replaced, never edited in place, so that cache stays valid; keep it that way. Do not mutate arrays returned by `words()`.
+- The page paints the last state it saw from `localStorage` (`SEEN` in `public/app.js`) before the fresh one arrives. Bump the number in `SEEN` when the shape of `/api/state` changes, so an old copy is not rendered.
 - Static files and `/api/state` send ETags; nginx gzips JS, CSS and JSON (in `deploy/nginx.conf.template`, applied by `setup-server.sh`, not by the pull deploy).
 
 ## The user's rules (do not weaken)
@@ -45,11 +46,12 @@ Opening the app must stay fast; `/api/state` once took 2.7 s there. Rules that k
 ## Data sources (verified 2026-11-11)
 
 - **Tjek squid API** `https://squid-api.tjek.com/v2` is the backend behind eTilbudsavis.no and Mattilbud.no. No key. It ignores `country_id`, so scope by `r_lat`/`r_lng`/`r_radius`. Hard cap of 1000 results per query (`PAGINATION_MAX_REACHED`), so fetch per `dealer_ids`. Grocery dealer IDs are in `lib/tjek.js`.
-  - `price` covers `quantity.size × quantity.pieces.from` (e.g. 40 × 0.33 l). Sizes can be ranges (averaged).
-  - Packs are often encoded as `unit: pcs, size: 1`; the real count ("18 PK", "80 stk") is parsed from the text.
+  - `price` covers `quantity.size × quantity.pieces.from` (e.g. 40 × 0.33 l). Sizes can be ranges (averaged); a `to` below `from` (`{from: 400, to: 1}`) is not a range, and `from` is the size.
+  - Packs are often encoded as `unit: pcs, size: 1`; the real count ("18 PK", "80 stk") is parsed from the text and multiplied by `pieces`, unless both are the same number (the same count given twice).
+  - Offers are validated when fetched (`tjek.valid`): the cache is kept for a week, so one without a heading or a positive price never enters it.
   - `pre_price` is present on only ~30% of grocery offers.
   - Public offer page: `https://etilbudsavis.no/{slug}?publication={catalog_id}&offer={id}`. The slug must be the dealer's real `markets[].slug` ("REMA-1000", "Naerbutikken"); a guessed slug is a 404, and mattilbud.no has no equivalent URL. `tjek.offerUrl()` builds it at fetch time and stores it on the slim offer.
-- **Kassalapp** `https://kassal.app/api/v1` is optional (Bearer key, set in Settings), ~60 req/min. `/products?search=` (min 3 chars, size ≤ 100). The regular price is the most common price in `price_history` over 90 days. Chain names differ from Tjek's ("Coop Extra" vs "Extra"); `shopKey()` normalises them.
+- **Kassalapp** `https://kassal.app/api/v1` is optional (Bearer key, set in Settings), ~60 req/min. `/products?search=` (min 3 chars, size ≤ 100). The regular price is the most common price in `price_history` over 90 days. Most of what a search returns is unusable and is not cached (`engine.usableProduct`): in November 2026, 494 of 812 products had no price sample in 90 days (some none for years) and 404 had no weight. A `piece` weight that contradicts the count in the product name is not trusted. Live data covers Meny, SPAR, Joker and Bunnpris; every KIWI and Coop product was stale, there is no REMA 1000, and all Coop chains share one store named "Coop" (`COOP_NO`), which `shopKey()` matches to none of them.
 
 ## Fetch schedule
 
@@ -59,7 +61,7 @@ Offers are fetched once per week (`engine.fetchSlots`, default Monday 01:00 Oslo
 
 Matching is accent-insensitive via `fold()` (ø→o, æ→ae, å→a). Kassalapp searches use the spelling seen in flyer headings (`searchTerms`), because Kassalapp search is spelling-exact. Kassalapp products are filtered by category when one matches the item (`relevantProducts`); otherwise dishes like "Grandiosa Pizza Kjøttdeig" pass as cheaper regular prices.
 
-A term word matches words that *start with* it; a leading `*` matches words that *end with* it (Norwegian compounds: `*smør` → meierismør). Plain substring matching was tried and rejected ("egg" hit "pålegg", "truseinnlegg"). All words of a term must appear, at least one in the title. Exclude words are a substring match on the title. Browse search uses the same `termMatches`.
+A term is cut into words the way offer text is, at anything that is not a letter or digit (`coca-cola` = `coca cola`, `14%` = `14`). A term word matches words that *start with* it; a leading `*` matches words that *end with* it (Norwegian compounds: `*smør` → meierismør). Plain substring matching was tried and rejected ("egg" hit "pålegg", "truseinnlegg"). All words of a term must appear, at least one in the title. Exclude words are a substring match on the title. Browse search uses the same `termMatches`.
 
 ## Deployment
 
@@ -74,3 +76,12 @@ Pull-based CD (see README.md): `.github/workflows/ci.yml` runs on GitHub, and th
 ## Public repo hygiene
 
 Do not commit IPs, hostnames/SSH aliases, other services on the server, keys, or personal emails. Commits use the GitHub noreply address (set in this repo's local git config).
+
+## Known bugs (audit 2026-11-16)
+
+Delete an entry in the commit that fixes it. Counts come from one week of live Oslo data (637 offers, 812 cached Kassalapp products).
+
+- **B15** `public/app.js`: every re-render re-opens collapsed shop cards; Browse responses can arrive out of order and are not refreshed after the shops change.
+- **B16** `deploy/pull-deploy.sh`: a commit with no check runs (`[skip ci]`) reads as pending forever, so the server polls the GitHub API every minute. Found by reading.
+
+Stale docs: the server's disk is no longer nearly full. Node 20 on the Pi passed end-of-life on 2026-04-30.
