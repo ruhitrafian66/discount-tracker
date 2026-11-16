@@ -5,7 +5,7 @@ Tilbud Tracker: a LAN-only web app showing this week's Norwegian grocery discoun
 ## Commands
 
 ```sh
-node --test test/*.test.js                 # unit tests (engine rules)
+node --test test/*.test.js                 # engine rules, fetcher, server.js over HTTP
 DATA_DIR=/tmp/dt PORT=3913 node server.js  # run locally; keep DATA_DIR out of the repo
 git push origin main                       # deploys: CI passes -> server pulls within ~1 min
 ```
@@ -15,6 +15,7 @@ git push origin main                       # deploys: CI passes -> server pulls 
 ## Constraints
 
 - **No npm dependencies, no build step.** The Pi runs Node 20, so use only Node 20 built-ins (global `fetch`, `node:test`). `node:sqlite` is not available there; storage is atomic JSON files in `DATA_DIR`.
+- **Settings change only through `updateSettings()`** in `server.js`: it builds a new object from the current one, writes it, then swaps it in, one change at a time. A failed write leaves memory as it was. `save()` writes each file through its own temp file, one write at a time per file; it does not call `touch()`. An unparseable `settings.json` is moved aside at start (`settings.json.unreadable-<time>`) instead of being overwritten by the defaults.
 - `lib/engine.js` is pure (no I/O). All business rules live there and are tested in `test/engine.test.js`. Change a rule there, with a test, not in `server.js`.
 - Offer text comes from external APIs. In `public/app.js`, always pass it through `esc()` before putting it in `innerHTML`. Links go through `safeUrl()` (https only).
 - Write endpoints require `Content-Type: application/json` and a same-origin `Origin` (CSRF guard; the app has no auth). Keep that for any new mutating route.
@@ -25,7 +26,7 @@ git push origin main                       # deploys: CI passes -> server pulls 
 
 Opening the app must stay fast; `/api/state` once took 2.7 s there. Rules that keep it at a few ms:
 
-- `server.js` caches the week's offers and the serialised state (`cached()`, keyed on `rev`). Anything that changes what the view shows must end in `save()` or call `touch()`, or the old view keeps being served. The cache also expires after 5 minutes because "this week" depends on the clock.
+- `server.js` caches the week's offers and the serialised state (`cached()`, keyed on `rev`). Anything that changes what the view shows must call `touch()`, or the old view keeps being served; write a file only when its content changed. The cache also expires after 5 minutes because "this week" depends on the clock.
 - Never construct `Intl.DateTimeFormat` per offer or per request; use `osloParts()` in the engine. Pass a precomputed `end` to `isThisWeek()` when filtering.
 - `fold()`, `words()` and `termWords()` are memoised per string, and `compileItem()` per item object. Tracked items are replaced, never edited in place, so that cache stays valid; keep it that way. Do not mutate arrays returned by `words()`.
 - Static files and `/api/state` send ETags; nginx gzips JS, CSS and JSON (in `deploy/nginx.conf.template`, applied by `setup-server.sh`, not by the pull deploy).
@@ -50,7 +51,7 @@ Opening the app must stay fast; `/api/state` once took 2.7 s there. Rules that k
 
 ## Fetch schedule
 
-Offers are fetched once per week (`engine.fetchSlots`, default Monday 01:00 Oslo time; `FETCH_WEEKDAY`/`FETCH_HOUR`) and cached all week. This is a user requirement: keep API load minimal, with no manual refresh button or TTL-based refetching. The 15-minute timer is only a local staleness check. The only off-schedule API calls are for a changed location, a newly selected shop, a failed shop (retried at most hourly), and Kassalapp lookups for new or edited items. Changing what `tjek.slim()` stores needs a bump of `OFFERS_CACHE_V` in `server.js`, which rebuilds the cache once; do that only when a feature needs new fields.
+Offers are fetched once per week (`engine.fetchSlots`, default Monday 01:00 Oslo time; `FETCH_WEEKDAY`/`FETCH_HOUR`) and cached all week. This is a user requirement: keep API load minimal, with no manual refresh button or TTL-based refetching. The 15-minute timer is only a local staleness check. `refreshAll()` runs one refresh at a time; a request arriving during one (a new item, a changed location) gets its own pass as soon as it ends. The only off-schedule API calls are for a changed location, a newly selected shop, a failed shop (retried at most hourly), and Kassalapp lookups for new or edited items. Changing what `tjek.slim()` stores needs a bump of `OFFERS_CACHE_V` in `server.js`, which rebuilds the cache once; do that only when a feature needs new fields.
 
 ## Matching semantics
 
@@ -75,10 +76,6 @@ Do not commit IPs, hostnames/SSH aliases, other services on the server, keys, or
 
 Delete an entry in the commit that fixes it. Counts come from one week of live Oslo data (637 offers, 812 cached Kassalapp products).
 
-- **B7** `server.js` `save()` on `main`: (a) one shared `.tmp` name, so concurrent saves fail with ENOENT (15 of 40 parallel adds returned 500 although the items were added); (b) memory changes before the write, so a failed write (disk full on 2026-11-15) leaves memory ahead of disk; (c) an unreadable `settings.json` silently becomes the defaults at start.
-- **B9** A refresh requested while one is running is dropped (the `status.*` guards in `server.js` on `main`), so a location change or new item waits for the next 15-minute tick. Found by reading, not reproduced.
-- **B11** `server.js` `readJson` on `main`: `Origin: null` makes `new URL` throw, giving a 500 and a stack trace in the log instead of a 403.
-- **B12** `server.js` `refreshKassal()` on `main` rewrites `kassal.json` and bumps `rev` every 15 minutes when nothing changed (seen on the Pi).
 - **B15** `public/app.js`: every re-render re-opens collapsed shop cards; Browse responses can arrive out of order and are not refreshed after the shops change.
 - **B16** `deploy/pull-deploy.sh`: a commit with no check runs (`[skip ci]`) reads as pending forever, so the server polls the GitHub API every minute. Found by reading.
 

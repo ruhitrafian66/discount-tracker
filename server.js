@@ -23,20 +23,51 @@ const slots = () => engine.fetchSlots(Date.now(), FETCH_WEEKDAY, FETCH_HOUR);
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const file = (n) => path.join(DATA_DIR, n);
 
-function load(name, fallback) {
-  try { return JSON.parse(fs.readFileSync(file(name), 'utf8')); } catch { return fallback; }
+// A missing file is a first run. One that cannot be parsed falls back too; with `keep`
+// it is first moved aside, so the next save does not overwrite what might be recovered.
+function load(name, fallback, { keep = false } = {}) {
+  let text;
+  try { text = fs.readFileSync(file(name), 'utf8'); } catch (e) {
+    if (e.code !== 'ENOENT') log(`cannot read ${name}: ${e.message}`);
+    return fallback;
+  }
+  try { return JSON.parse(text); } catch (e) {
+    let kept = '';
+    if (keep) {
+      const aside = `${name}.unreadable-${Date.now()}`;
+      try { fs.renameSync(file(name), file(aside)); kept = `; kept as ${aside}`; } catch { /* stays where it is */ }
+    }
+    log(`${name} is not valid JSON (${e.message})${kept}; starting without it`);
+    return fallback;
+  }
 }
-async function save(name, data) {
-  const tmp = file(name + '.tmp');
-  await fsp.writeFile(tmp, JSON.stringify(data));
-  await fsp.rename(tmp, file(name));
-  touch();
+
+// Each write goes through its own temp file, and writes to one file run one after the
+// other, so saves arriving together cannot collide. Callers change memory themselves
+// (and call touch()): caches before the write, settings only after it succeeded.
+const writes = new Map();  // file name -> its latest write
+let tmpSeq = 0;
+function save(name, data) {
+  const json = JSON.stringify(data);  // the data as of now, even if the write has to wait
+  const write = async () => {
+    const tmp = file(`${name}.${process.pid}.${++tmpSeq}.tmp`);
+    try {
+      await fsp.writeFile(tmp, json);
+      await fsp.rename(tmp, file(name));
+    } catch (e) {
+      await fsp.rm(tmp, { force: true }).catch(() => {});
+      throw e;
+    }
+  };
+  const p = (writes.get(name) || Promise.resolve()).then(write, write);
+  writes.set(name, p);
+  return p;
 }
 
 // ---- view cache -------------------------------------------------------------
 // Computing the deals view costs real CPU on a small board, and its inputs only
 // change when settings, offers or Kassalapp data change. `rev` counts those
-// changes (every save() bumps it); cached values are reused while it stands still.
+// changes (touch() bumps it); cached values are reused while it stands still.
 // They also expire by time, because "this week" and the next fetch move with the clock.
 let rev = 0;
 function touch() { rev++; }
@@ -56,7 +87,22 @@ const DEFAULT_SETTINGS = {
   kassalKey: '',
   trackedItems: [],
 };
-const settings = { ...DEFAULT_SETTINGS, ...load('settings.json', {}) };
+// Replaced, never edited in place: see updateSettings().
+let settings = { ...DEFAULT_SETTINGS, ...load('settings.json', {}, { keep: true }) };
+// Settings change one at a time: build the new object from the current one, write it,
+// then swap it in. A failed write leaves memory as it was, and two requests arriving
+// together cannot overwrite each other. `change` may throw an httpError.
+let settingsQueue = Promise.resolve();
+function updateSettings(change) {
+  const p = settingsQueue.then(async () => {
+    const next = change(settings);
+    await save('settings.json', next);
+    settings = next;
+    touch();
+  });
+  settingsQueue = p.catch(() => {});
+  return p;
+}
 // Bump when the stored offer shape changes (tjek.slim): the cache is then rebuilt
 // once, off-schedule. v2 added `url`.
 const OFFERS_CACHE_V = 2;
@@ -73,21 +119,21 @@ const locKey = (l) => `${l.lat.toFixed(4)},${l.lng.toFixed(4)},${l.radiusKm}`;
 // Outside the slot, the API is only called for data the cache cannot have:
 // a changed location, a newly selected shop, or a shop whose fetch failed (retried).
 async function refreshOffers() {
-  if (status.refreshing) return;
-  const lk = locKey(settings.location);
+  const { location, shops } = settings;  // as they are now: a change during the fetch gets its own pass
+  const lk = locKey(location);
   const stale = offersCache.fetchedAt < slots().last || offersCache.locKey !== lk || offersCache.v !== OFFERS_CACHE_V;
   // Failed shops are retried at most hourly.
-  const missing = settings.shops.filter((id) => !offersCache.byDealer[id] && !(Date.now() - (failedAt.get(id) || 0) < 3600e3));
+  const missing = shops.filter((id) => !offersCache.byDealer[id] && !(Date.now() - (failedAt.get(id) || 0) < 3600e3));
   if (!stale && !missing.length) return;
 
   status.refreshing = true;
-  const toFetch = stale ? settings.shops : missing;
+  const toFetch = stale ? shops : missing;
   const byDealer = stale ? {} : { ...offersCache.byDealer };
   const errors = [];
   try {
     for (const id of toFetch) {
       try {
-        byDealer[id] = (await tjek.fetchDealerOffers(id, settings.location)).map(tjek.slim);
+        byDealer[id] = (await tjek.fetchDealerOffers(id, location)).map(tjek.slim);
         failedAt.delete(id);
       } catch (e) {
         errors.push(`${dealerName(id)}: ${e.message}`);  // left missing -> retried later
@@ -96,9 +142,10 @@ async function refreshOffers() {
     }
     let discovered = offersCache.discovered;
     if (stale || !discovered.length) {
-      try { discovered = await tjek.discoverDealers(settings.location); } catch (e) { errors.push(`Shop discovery: ${e.message}`); }
+      try { discovered = await tjek.discoverDealers(location); } catch (e) { errors.push(`Shop discovery: ${e.message}`); }
     }
     offersCache = { v: OFFERS_CACHE_V, fetchedAt: stale ? Date.now() : offersCache.fetchedAt, locKey: lk, byDealer, discovered, errors };
+    touch();
     await save('offers.json', offersCache);
     log(`offers refreshed: ${Object.values(byDealer).flat().length} offers from ${toFetch.length} shops${errors.length ? `, ${errors.length} errors` : ''}`);
   } finally {
@@ -107,40 +154,55 @@ async function refreshOffers() {
 }
 
 async function refreshKassal() {
-  if (status.kassalRefreshing || !settings.kassalKey || process.env.DISABLE_FETCH) return;
+  const { kassalKey, trackedItems } = settings;
+  if (!kassalKey) return;
   status.kassalRefreshing = true;
   status.kassalError = null;
+  let changed = false;  // the file is only rewritten when a lookup ran or an entry went
   try {
     const offers = weekOffers();
-    for (const item of [...settings.trackedItems]) {
+    for (const item of trackedItems) {
       const terms = engine.searchTerms(item, offers);
       const key = JSON.stringify(['v2', terms]);  // bump when the cached product shape changes
       const c = kassalCache[item.id];
       if (c && c.termsKey === key && c.fetchedAt >= slots().last) continue;
       try {
-        const products = await kassal.productsForTerms(settings.kassalKey, terms);
+        const products = await kassal.productsForTerms(kassalKey, terms);
         kassalCache[item.id] = { fetchedAt: Date.now(), termsKey: key, products };
         touch();
+        changed = true;
       } catch (e) {
         status.kassalError = e.status === 401 ? 'Kassalapp rejected the API key (401).' : e.message;
         if (e.status === 401) break;
       }
     }
     const ids = new Set(settings.trackedItems.map((i) => i.id));
-    for (const id of Object.keys(kassalCache)) if (!ids.has(id)) delete kassalCache[id];
-    await save('kassal.json', kassalCache);
+    for (const id of Object.keys(kassalCache)) if (!ids.has(id)) { delete kassalCache[id]; changed = true; }
+    if (changed) {
+      touch();
+      await save('kassal.json', kassalCache);
+    }
   } finally {
     status.kassalRefreshing = false;
   }
 }
 
+// One refresh at a time. A request that arrives while one runs (a new item, a changed
+// location) starts another pass as soon as it ends, instead of waiting for the next tick.
 // Kassalapp runs after offers: its search spellings are learned from the offers.
+let refreshing = null, refreshAgain = false;
 function refreshAll() {
-  refreshOffers()
-    .catch((e) => log('offers refresh failed:', e.message))
-    .then(() => refreshKassal())
-    .then(() => { stateBody(); })  // warm the view cache so the next page load is instant
-    .catch((e) => log('kassal refresh failed:', e.message));
+  if (process.env.DISABLE_FETCH) return Promise.resolve();  // set in CI and tests: no external API calls
+  if (refreshing) { refreshAgain = true; return refreshing; }
+  refreshing = (async () => {
+    do {
+      refreshAgain = false;
+      await refreshOffers().catch((e) => log('offers refresh failed:', e.message));
+      await refreshKassal().catch((e) => log('kassal refresh failed:', e.message));
+    } while (refreshAgain);
+    stateBody();  // warm the view cache so the next page load is instant
+  })().catch((e) => log('refresh failed:', e.message)).finally(() => { refreshing = null; });
+  return refreshing;
 }
 
 // ---- view model ---------------------------------------------------------
@@ -210,10 +272,10 @@ const str = (v, max = 200) => String(v == null ? '' : v).trim().slice(0, max);
 const list = (v) => (Array.isArray(v) ? v : String(v || '').split(','))
   .map((s) => str(s, 60)).filter(Boolean).slice(0, 20);
 
-function cleanItem(body, id) {
+function cleanItem(body, id, items) {
   const name = str(body.name, 60);
   if (!name) throw httpError(400, 'Name is required');
-  if (settings.trackedItems.some((i) => i.id !== id && engine.fold(i.name) === engine.fold(name))) {
+  if (items.some((i) => i.id !== id && engine.fold(i.name) === engine.fold(name))) {
     throw httpError(409, `Already tracking "${name}"`);
   }
   const terms = list(body.terms);
@@ -235,7 +297,11 @@ async function readJson(req) {
   // Requiring a JSON content type and same-origin blocks cross-site form posts from other pages.
   if (!String(req.headers['content-type'] || '').startsWith('application/json')) throw httpError(415, 'JSON required');
   const origin = req.headers.origin;
-  if (origin && new URL(origin).host !== req.headers.host) throw httpError(403, 'Cross-origin request refused');
+  if (origin) {
+    let host = null;
+    try { host = new URL(origin).host; } catch { /* "null" and the like: refused below */ }
+    if (host !== req.headers.host) throw httpError(403, 'Cross-origin request refused');
+  }
   let data = '';
   for await (const chunk of req) {
     data += chunk;
@@ -263,31 +329,37 @@ async function api(req, res, url) {
 
   if (m === 'PUT' && p === '/api/settings') {
     const b = await readJson(req);
-    if (b.location) {
-      const lat = Number(b.location.lat), lng = Number(b.location.lng), radiusKm = Number(b.location.radiusKm);
-      if (!(lat >= 57 && lat <= 72 && lng >= 4 && lng <= 32)) throw httpError(400, 'Location must be in Norway');
-      if (!(radiusKm >= 1 && radiusKm <= 100)) throw httpError(400, 'Radius must be 1–100 km');
-      settings.location = { name: str(b.location.name, 60) || 'Custom', lat, lng, radiusKm };
-    }
-    if (Array.isArray(b.shops)) {
-      const known = new Set(allDealers().map((d) => d.id));
-      settings.shops = [...new Set(b.shops.filter((id) => known.has(id)))];
-    }
+    await updateSettings((s) => {
+      const next = { ...s };
+      if (b.location) {
+        const lat = Number(b.location.lat), lng = Number(b.location.lng), radiusKm = Number(b.location.radiusKm);
+        if (!(lat >= 57 && lat <= 72 && lng >= 4 && lng <= 32)) throw httpError(400, 'Location must be in Norway');
+        if (!(radiusKm >= 1 && radiusKm <= 100)) throw httpError(400, 'Radius must be 1–100 km');
+        next.location = { name: str(b.location.name, 60) || 'Custom', lat, lng, radiusKm };
+      }
+      if (Array.isArray(b.shops)) {
+        const known = new Set(allDealers().map((d) => d.id));
+        next.shops = [...new Set(b.shops.filter((id) => known.has(id)))];
+      }
+      if (typeof b.kassalKey === 'string') next.kassalKey = str(b.kassalKey, 200);
+      return next;
+    });
     if (typeof b.kassalKey === 'string') {
-      settings.kassalKey = str(b.kassalKey, 200);
       for (const k of Object.keys(kassalCache)) delete kassalCache[k];
+      touch();
     }
-    await save('settings.json', settings);
     refreshAll();
     return sendState(req, res);
   }
 
   if (m === 'POST' && p === '/api/items') {
-    const item = cleanItem(await readJson(req), crypto.randomUUID());
-    if (settings.trackedItems.length >= 200) throw httpError(400, 'Too many tracked items');
-    settings.trackedItems.push(item);
-    await save('settings.json', settings);
-    refreshKassal().catch((e) => log(e.message));
+    const b = await readJson(req);
+    await updateSettings((s) => {
+      const item = cleanItem(b, crypto.randomUUID(), s.trackedItems);
+      if (s.trackedItems.length >= 200) throw httpError(400, 'Too many tracked items');
+      return { ...s, trackedItems: [...s.trackedItems, item] };
+    });
+    refreshAll();
     return sendState(req, res, 201);
   }
 
@@ -296,19 +368,23 @@ async function api(req, res, url) {
     const b = await readJson(req);
     const ids = new Set(Array.isArray(b.ids) ? b.ids.map(String) : []);
     if (!ids.size) throw httpError(400, 'No items selected');
-    settings.trackedItems = settings.trackedItems.filter((i) => !ids.has(i.id));
-    await save('settings.json', settings);
+    await updateSettings((s) => ({ ...s, trackedItems: s.trackedItems.filter((i) => !ids.has(i.id)) }));
     return sendState(req, res);
   }
 
   const im = p.match(/^\/api\/items\/([\w-]+)$/);
   if (im && (m === 'PUT' || m === 'DELETE')) {
-    const idx = settings.trackedItems.findIndex((i) => i.id === im[1]);
-    if (idx < 0) throw httpError(404, 'No such item');
-    if (m === 'PUT') settings.trackedItems[idx] = cleanItem(await readJson(req), im[1]);
-    else { await readJson(req); settings.trackedItems.splice(idx, 1); }
-    await save('settings.json', settings);
-    refreshKassal().catch((e) => log(e.message));
+    if (!settings.trackedItems.some((i) => i.id === im[1])) throw httpError(404, 'No such item');
+    const b = await readJson(req);
+    await updateSettings((s) => {
+      const idx = s.trackedItems.findIndex((i) => i.id === im[1]);
+      if (idx < 0) throw httpError(404, 'No such item');
+      const items = [...s.trackedItems];
+      if (m === 'PUT') items[idx] = cleanItem(b, im[1], items);
+      else items.splice(idx, 1);
+      return { ...s, trackedItems: items };
+    });
+    refreshAll();
     return sendState(req, res);
   }
 
