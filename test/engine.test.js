@@ -272,3 +272,96 @@ test('shops are sorted by total kroner saved, most first', () => {
   const r = E.compute({ offers, trackedItems: [smor, kaffe], shopKeys: shops, now: NOW });
   assert.deepEqual(r.shops.map((s) => [s.name, s.saved]), [['REMA 1000', 40], ['KIWI', 10]]);
 });
+
+test('a Kassalapp price with no sample in the last 90 days is not a regular price', () => {
+  const old = { current_price: 30, price_history: [{ price: 30, date: '2026-02-10' }, { price: 30, date: '2026-02-09' }] };
+  assert.equal(E.regularFromHistory(old, NOW), null);
+  assert.equal(E.regularFromHistory({ current_price: 30, price_history: [] }, NOW), null);
+  // A stale shelf price elsewhere neither drops the offer nor serves as its reference.
+  const offers = [offer('KIWI', 'Meierismør', 49.9, { pre: 72.9 })];
+  const stale = { ...kp('Meny', 'Meny Smør', 45), price_history: [{ price: 45, date: '2026-02-10' }] };
+  const r = E.compute({ offers, trackedItems: [smor], shopKeys: shops, kassal: { t1: [stale] }, now: NOW });
+  assert.deepEqual(items(r.shops), [['KIWI', 'Meierismør']]);
+  assert.match(r.shops[0].items[0].regular.source, /flyer/);
+});
+
+test('only Kassalapp products that can give a regular price are usable', () => {
+  assert.ok(E.usableProduct(kp('Meny', 'Smør', 45), NOW));
+  assert.ok(!E.usableProduct({ ...kp('Meny', 'Smør', 45), store: null }, NOW), 'no shop');
+  assert.ok(!E.usableProduct({ ...kp('Meny', 'Smør', 45), weight: null, weight_unit: null }, NOW), 'no amount');
+  assert.ok(!E.usableProduct({ ...kp('Meny', 'Smør', 45), price_history: [{ price: 45, date: '2025-11-01' }] }, NOW), 'stale');
+});
+
+test('punctuation in a term is a word break, as it is in offer text', () => {
+  const cola = { id: 'c', name: 'Cola', terms: ['coca-cola'] };
+  assert.ok(E.itemMatches(cola, 'COCA-COLA ZERO', ''));
+  assert.ok(E.itemMatches(cola, 'Coca Cola', '1,5 l'));
+  const mince = { id: 'k', name: 'K', terms: ['kjøttdeig 14%'] };
+  assert.ok(E.itemMatches(mince, 'KJØTTDEIG 14 % FETT', ''));
+  assert.ok(!E.itemMatches(mince, 'KJØTTDEIG 10 % FETT', ''));
+  assert.ok(E.itemMatches({ id: 'p', name: 'P', terms: ['pinnekjøtt/ pinnebog'] }, 'PINNEKJØTT/ PINNEBOG', ''));
+  assert.ok(E.termMatches("ben & jerry's", "Ben & Jerry's", ''));
+  // '*' still marks a suffix word, also right after punctuation.
+  assert.ok(E.itemMatches({ id: 's', name: 'S', terms: ['tine-*smør'] }, 'Meierismør', 'TINE'));
+  assert.ok(!E.itemMatches({ id: 's', name: 'S', terms: ['tine-smør'] }, 'Meierismør', 'TINE'));
+  // A term with no letters or digits matches nothing.
+  assert.ok(!E.itemMatches({ id: 'x', name: 'X', terms: ['-', '*', '% /'] }, 'Smør', ''));
+  // Kassalapp is searched with the words, without the punctuation.
+  assert.deepEqual(E.searchTerms({ name: 'c', terms: ['coca-cola'] }, [offer('KIWI', 'COCA-COLA ZERO', 20)]), ['coca cola']);
+});
+
+test('a size range whose "to" is below "from" uses "from"', () => {
+  const o = offer('Bunnpris', 'Kjøttdeig av storfe', 60);
+  o.quantity.size = { from: 400, to: 1 };
+  assert.deepEqual(E.offerAmount(o), { dim: 'kg', amount: 400 * 0.001 });
+});
+
+test('a pack count that the flyer also gives as "pieces" is counted once', () => {
+  const roses = offer('KIWI', 'ROSER', 99, { size: 1, unit: 'pcs', pieces: 10, desc: '10 stk. pr. stk. 9,90' });
+  assert.deepEqual(E.offerAmount(roses), { dim: 'stk', amount: 10 });
+  // Two packs of 14 are 28 pieces.
+  const omo = offer('MENY', 'OMO COLOR/HVITT', 99, { size: 1, unit: 'pcs', pieces: 2, desc: '14stk, kapsler' });
+  assert.deepEqual(E.offerAmount(omo), { dim: 'stk', amount: 28 });
+});
+
+test('a Kassalapp piece count that contradicts the product name is not used', () => {
+  const caps = offer('REMA 1000', 'STARBUCKS KAFFEKAPSLER', 39.9, { pre: 49.9, size: 10, unit: 'pcs' });
+  const item = { id: 'c', name: 'Coffee', terms: ['kaffe'] };
+  // 126 is the weight in grams, filed as pieces: 49,90 / 126 would be 0,40 kr per piece.
+  const pads = kp('Meny', 'Ali Original Kaffeputer 18stk', 49.9, 126, 'piece');
+  let r = E.compute({ offers: [caps], trackedItems: [item], shopKeys: shops, kassal: { c: [pads] }, now: NOW });
+  assert.deepEqual(items(r.shops), [['REMA 1000', 'STARBUCKS KAFFEKAPSLER']]);
+  // A count that agrees with the name still counts: 1,99 per piece beats 3,99 on offer.
+  const cheap = kp('Meny', 'Kaffeputer 18stk', 35.82, 18, 'piece');
+  r = E.compute({ offers: [caps], trackedItems: [item], shopKeys: shops, kassal: { c: [cheap] }, now: NOW });
+  assert.equal(r.shops.length, 0);
+  assert.match(r.dropped[0].reason, /Regular price at Meny is lower/);
+  // No count in the name: the piece count stands.
+  assert.ok(E.usableProduct(kp('Meny', 'Kiwi stykk', 11.9, 1, 'piece'), NOW));
+});
+
+test('an offer without a usable price is left out instead of breaking the comparison', () => {
+  const good = offer('MENY', 'Smør', 30, { pre: 40 });
+  for (const price of [undefined, null, 'abc', 0]) {
+    const bad = offer('KIWI', 'Smør', 1);
+    bad.pricing = { price };
+    const r = E.compute({ offers: [bad, good], trackedItems: [smor], shopKeys: shops, now: NOW });
+    assert.deepEqual(items(r.shops), [['MENY', 'Smør']], `price ${price}`);
+    assert.equal(r.dropped.length, 0);
+  }
+  const none = offer('KIWI', 'Smør', 1);
+  delete none.pricing;
+  assert.deepEqual(items(E.compute({ offers: [none, good], trackedItems: [smor], shopKeys: shops, now: NOW }).shops), [['MENY', 'Smør']]);
+});
+
+test('end of week is right across the daylight-saving changes', () => {
+  const end = (iso) => new Date(E.endOfWeek(Date.parse(iso))).toISOString();
+  // Spring: clocks go forward on Sunday 29 Mar 2026, so Sunday 23:59:59 is CEST (UTC+2).
+  for (const now of ['2026-03-23T12:00:00Z', '2026-03-23T22:30:00Z', '2026-03-28T22:30:00Z', '2026-03-28T23:30:00Z', '2026-03-29T12:00:00Z']) {
+    assert.equal(end(now), '2026-03-29T21:59:59.000Z', now);
+  }
+  // Autumn: clocks go back on Sunday 25 Oct 2026, so Sunday 23:59:59 is CET (UTC+1).
+  for (const now of ['2026-10-19T22:30:00Z', '2026-10-24T21:30:00Z', '2026-10-25T12:00:00Z']) {
+    assert.equal(end(now), '2026-10-25T22:59:59.000Z', now);
+  }
+});

@@ -41,11 +41,12 @@ Opening the app must stay fast; `/api/state` once took 2.7 s there. Rules that k
 ## Data sources (verified 2026-11-11)
 
 - **Tjek squid API** `https://squid-api.tjek.com/v2` is the backend behind eTilbudsavis.no and Mattilbud.no. No key. It ignores `country_id`, so scope by `r_lat`/`r_lng`/`r_radius`. Hard cap of 1000 results per query (`PAGINATION_MAX_REACHED`), so fetch per `dealer_ids`. Grocery dealer IDs are in `lib/tjek.js`.
-  - `price` covers `quantity.size × quantity.pieces.from` (e.g. 40 × 0.33 l). Sizes can be ranges (averaged).
-  - Packs are often encoded as `unit: pcs, size: 1`; the real count ("18 PK", "80 stk") is parsed from the text.
+  - `price` covers `quantity.size × quantity.pieces.from` (e.g. 40 × 0.33 l). Sizes can be ranges (averaged); a `to` below `from` (`{from: 400, to: 1}`) is not a range, and `from` is the size.
+  - Packs are often encoded as `unit: pcs, size: 1`; the real count ("18 PK", "80 stk") is parsed from the text and multiplied by `pieces`, unless both are the same number (the same count given twice).
+  - Offers are validated when fetched (`tjek.valid`): the cache is kept for a week, so one without a heading or a positive price never enters it.
   - `pre_price` is present on only ~30% of grocery offers.
   - Public offer page: `https://etilbudsavis.no/{slug}?publication={catalog_id}&offer={id}`. The slug must be the dealer's real `markets[].slug` ("REMA-1000", "Naerbutikken"); a guessed slug is a 404, and mattilbud.no has no equivalent URL. `tjek.offerUrl()` builds it at fetch time and stores it on the slim offer.
-- **Kassalapp** `https://kassal.app/api/v1` is optional (Bearer key, set in Settings), ~60 req/min. `/products?search=` (min 3 chars, size ≤ 100). The regular price is the most common price in `price_history` over 90 days. Chain names differ from Tjek's ("Coop Extra" vs "Extra"); `shopKey()` normalises them.
+- **Kassalapp** `https://kassal.app/api/v1` is optional (Bearer key, set in Settings), ~60 req/min. `/products?search=` (min 3 chars, size ≤ 100). The regular price is the most common price in `price_history` over 90 days. Most of what a search returns is unusable and is not cached (`engine.usableProduct`): in November 2026, 494 of 812 products had no price sample in 90 days (some none for years) and 404 had no weight. A `piece` weight that contradicts the count in the product name is not trusted. Live data covers Meny, SPAR, Joker and Bunnpris; every KIWI and Coop product was stale, there is no REMA 1000, and all Coop chains share one store named "Coop" (`COOP_NO`), which `shopKey()` matches to none of them.
 
 ## Fetch schedule
 
@@ -55,7 +56,7 @@ Offers are fetched once per week (`engine.fetchSlots`, default Monday 01:00 Oslo
 
 Matching is accent-insensitive via `fold()` (ø→o, æ→ae, å→a). Kassalapp searches use the spelling seen in flyer headings (`searchTerms`), because Kassalapp search is spelling-exact. Kassalapp products are filtered by category when one matches the item (`relevantProducts`); otherwise dishes like "Grandiosa Pizza Kjøttdeig" pass as cheaper regular prices.
 
-A term word matches words that *start with* it; a leading `*` matches words that *end with* it (Norwegian compounds: `*smør` → meierismør). Plain substring matching was tried and rejected ("egg" hit "pålegg", "truseinnlegg"). All words of a term must appear, at least one in the title. Exclude words are a substring match on the title. Browse search uses the same `termMatches`.
+A term is cut into words the way offer text is, at anything that is not a letter or digit (`coca-cola` = `coca cola`, `14%` = `14`). A term word matches words that *start with* it; a leading `*` matches words that *end with* it (Norwegian compounds: `*smør` → meierismør). Plain substring matching was tried and rejected ("egg" hit "pålegg", "truseinnlegg"). All words of a term must appear, at least one in the title. Exclude words are a substring match on the title. Browse search uses the same `termMatches`.
 
 ## Deployment
 
@@ -74,23 +75,11 @@ Do not commit IPs, hostnames/SSH aliases, other services on the server, keys, or
 
 Delete an entry in the commit that fixes it. Counts come from one week of live Oslo data (637 offers, 812 cached Kassalapp products).
 
-Wrong results:
-
-- **B1** `engine.regularFromHistory`: a Kassalapp price of any age counts as today's shelf price (it falls back to `current_price` when every sample is older than 90 days). 494 of 812 products had no sample in 90 days, including every Coop and KIWI one. Two real deals were dropped against prices 9 months and 4 years old.
-- **B2** `engine.termWords`: term words split on spaces only, offer text on every non-letter, so a term with punctuation (`coca-cola`, `14%`, `a/b`) matches nothing. "+ Track" in Browse copies the heading as the term: for 126 of 637 offers the new item misses its own offer. `startTracking()` in `public/app.js` also lets a comma in the heading become separate OR-terms.
-- **B4** `engine.offerAmount`: `size.to < size.from` (Tjek sends `{from: 400, to: 1}`) is averaged to 200.5 g, doubling the unit price. 3 offers.
-- **B5** `engine.productAmount`: Kassalapp `weight_unit: piece` is trusted when the name disagrees ("…Kaffeputer 18stk" with `weight: 126` gives 0,40 kr/stk), causing a false "regular price elsewhere is lower" drop.
-- **B6** `engine.offerAmount`: the count in the text is multiplied by `pieces` even when both hold the same number ("10 stk" with `pieces: 10` gives 100 stk). Multiplying is right when they differ (2 × "14 stk").
-- **B10** `engine.endOfWeek`: it adds whole 24 h days, so in the week before the spring DST change it returns Monday night between 23:00 and 24:00, and is 1 h off after midnight in both DST weeks.
-
-Robustness:
-
 - **B7** `server.js` `save()` on `main`: (a) one shared `.tmp` name, so concurrent saves fail with ENOENT (15 of 40 parallel adds returned 500 although the items were added); (b) memory changes before the write, so a failed write (disk full on 2026-11-15) leaves memory ahead of disk; (c) an unreadable `settings.json` silently becomes the defaults at start.
-- **B8** `engine.compute` / `lib/tjek.js`: an offer with a missing or non-numeric `pricing.price` that matches a tracked item makes `compute()` throw (`best` is undefined), so `/api/state` answers 500 until the next weekly fetch; `price: null` counts as 0 kr and wins. None in the live data.
 - **B9** A refresh requested while one is running is dropped (the `status.*` guards in `server.js` on `main`), so a location change or new item waits for the next 15-minute tick. Found by reading, not reproduced.
 - **B11** `server.js` `readJson` on `main`: `Origin: null` makes `new URL` throw, giving a 500 and a stack trace in the log instead of a 403.
 - **B12** `server.js` `refreshKassal()` on `main` rewrites `kassal.json` and bumps `rev` every 15 minutes when nothing changed (seen on the Pi).
 - **B15** `public/app.js`: every re-render re-opens collapsed shop cards; Browse responses can arrive out of order and are not refreshed after the shops change.
 - **B16** `deploy/pull-deploy.sh`: a commit with no check runs (`[skip ci]`) reads as pending forever, so the server polls the GitHub API every minute. Found by reading.
 
-Stale docs: Kassalapp's Coop store is named "Coop" (code `COOP_NO`), which `shopKey()` matches to none of the Coop chains, unlike what "Data sources" says. The server's disk is no longer nearly full. Node 20 on the Pi passed end-of-life on 2026-04-30.
+Stale docs: the server's disk is no longer nearly full. Node 20 on the Pi passed end-of-life on 2026-04-30.

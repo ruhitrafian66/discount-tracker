@@ -350,7 +350,10 @@ async function browse() {
 }
 function startTracking(heading) {
   const name = heading.toLowerCase().replace(/\s+/g, ' ').trim();
-  fillItemForm({ id: '', name: name.charAt(0).toUpperCase() + name.slice(1), terms: [name], exclude: [] });
+  // The terms field is comma-separated: a comma kept from the heading would split it
+  // into separate either-or terms.
+  const term = name.replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
+  fillItemForm({ id: '', name: name.charAt(0).toUpperCase() + name.slice(1), terms: [term], exclude: [] });
   show('items');
   $('#item-form').name.focus();
 }

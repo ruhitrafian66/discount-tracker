@@ -27,6 +27,7 @@ The Deals page groups deals by shop, with the shop where you save the most krone
 - `kylling` matches words that *start with* it (kyllingfilet).
 - `*smør` matches words that *end with* it (meierismør, the usual Norwegian compound).
 - `tine *smør`: every word must appear, and at least one of them in the offer title.
+- Punctuation separates words, as it does in the offers: `coca-cola` is the same as `coca cola`.
 - Exclude words drop an offer if they appear anywhere in its title.
 - Spelling of æ/ø/å doesn't matter: `kjottdeig` matches KJØTTDEIG.
 
@@ -35,7 +36,7 @@ Use **Browse offers** to try terms out. It uses the same matching rules.
 ## Data sources
 
 - **Tjek squid API** (`squid-api.tjek.com/v2`): the backend behind eTilbudsavis.no and Mattilbud.no. Public, location-based, at most 1000 results per query, so offers are fetched per shop. Flyers change on Sunday and run from Monday, so offers are fetched **once a week, Monday 01:00 Oslo time**, and kept for the rest of the week. There is no manual refresh. If the server was down at that time, it catches up once on start. Changing the location or adding a shop fetches only what's missing.
-- **Kassalapp** (`kassal.app/api/v1`): optional, needs a free API key (Settings). Supplies per-chain shelf prices. The regular price is the most common price in the last 90 days, so a short campaign doesn't count as the regular price. Looked up weekly with the offers, and right away for new or edited items. When an item's name matches a Kassalapp category (e.g. "Kjøttdeig"), only products in such categories count. That stops a pizza with kjøttdeig in its name from being treated as cheaper kjøttdeig.
+- **Kassalapp** (`kassal.app/api/v1`): optional, needs a free API key (Settings). Supplies per-chain shelf prices. The regular price is the most common price in the last 90 days, so a short campaign doesn't count as the regular price. A product whose price was last sampled more than 90 days ago is ignored. Looked up weekly with the offers, and right away for new or edited items. When an item's name matches a Kassalapp category (e.g. "Kjøttdeig"), only products in such categories count. That stops a pizza with kjøttdeig in its name from being treated as cheaper kjøttdeig.
 
 ## Layout
 

@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { offerUrl, slim } = require('../lib/tjek');
+const { offerUrl, slim, valid } = require('../lib/tjek');
 
 const raw = (over = {}) => ({
   id: 'ghvjktAxv0xuv43NPvkVo', catalog_id: 'JuJgOIGV', heading: 'Coop Kjøttdeig', description: '',
@@ -31,4 +31,15 @@ test('slim keeps the link and drops the bulky fields', () => {
   const s = slim(raw());
   assert.equal(s.url, 'https://etilbudsavis.no/Extra?publication=JuJgOIGV&offer=ghvjktAxv0xuv43NPvkVo');
   assert.equal(s.dealer.markets, undefined);
+});
+
+test('an offer needs a heading, a positive price and a shop to be kept', () => {
+  assert.ok(valid(raw()));
+  assert.ok(!valid(raw({ pricing: { price: null } })));
+  assert.ok(!valid(raw({ pricing: { price: 0 } })));
+  assert.ok(!valid(raw({ pricing: undefined })));
+  assert.ok(!valid(raw({ heading: null })));
+  assert.ok(!valid(raw({ heading: '  ' })));
+  assert.ok(!valid(raw({ dealer: null })));
+  assert.ok(!valid(null));
 });
