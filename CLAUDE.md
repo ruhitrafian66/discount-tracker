@@ -69,3 +69,28 @@ Pull-based CD (see README.md): `.github/workflows/ci.yml` runs on GitHub, and th
 ## Public repo hygiene
 
 Do not commit IPs, hostnames/SSH aliases, other services on the server, keys, or personal emails. Commits use the GitHub noreply address (set in this repo's local git config).
+
+## Known bugs (audit 2026-11-16)
+
+Delete an entry in the commit that fixes it. Counts come from one week of live Oslo data (637 offers, 812 cached Kassalapp products).
+
+Wrong results:
+
+- **B1** `engine.regularFromHistory`: a Kassalapp price of any age counts as today's shelf price (it falls back to `current_price` when every sample is older than 90 days). 494 of 812 products had no sample in 90 days, including every Coop and KIWI one. Two real deals were dropped against prices 9 months and 4 years old.
+- **B2** `engine.termWords`: term words split on spaces only, offer text on every non-letter, so a term with punctuation (`coca-cola`, `14%`, `a/b`) matches nothing. "+ Track" in Browse copies the heading as the term: for 126 of 637 offers the new item misses its own offer. `startTracking()` in `public/app.js` also lets a comma in the heading become separate OR-terms.
+- **B4** `engine.offerAmount`: `size.to < size.from` (Tjek sends `{from: 400, to: 1}`) is averaged to 200.5 g, doubling the unit price. 3 offers.
+- **B5** `engine.productAmount`: Kassalapp `weight_unit: piece` is trusted when the name disagrees ("…Kaffeputer 18stk" with `weight: 126` gives 0,40 kr/stk), causing a false "regular price elsewhere is lower" drop.
+- **B6** `engine.offerAmount`: the count in the text is multiplied by `pieces` even when both hold the same number ("10 stk" with `pieces: 10` gives 100 stk). Multiplying is right when they differ (2 × "14 stk").
+- **B10** `engine.endOfWeek`: it adds whole 24 h days, so in the week before the spring DST change it returns Monday night between 23:00 and 24:00, and is 1 h off after midnight in both DST weeks.
+
+Robustness:
+
+- **B7** `server.js` `save()` on `main`: (a) one shared `.tmp` name, so concurrent saves fail with ENOENT (15 of 40 parallel adds returned 500 although the items were added); (b) memory changes before the write, so a failed write (disk full on 2026-11-15) leaves memory ahead of disk; (c) an unreadable `settings.json` silently becomes the defaults at start.
+- **B8** `engine.compute` / `lib/tjek.js`: an offer with a missing or non-numeric `pricing.price` that matches a tracked item makes `compute()` throw (`best` is undefined), so `/api/state` answers 500 until the next weekly fetch; `price: null` counts as 0 kr and wins. None in the live data.
+- **B9** A refresh requested while one is running is dropped (the `status.*` guards in `server.js` on `main`), so a location change or new item waits for the next 15-minute tick. Found by reading, not reproduced.
+- **B11** `server.js` `readJson` on `main`: `Origin: null` makes `new URL` throw, giving a 500 and a stack trace in the log instead of a 403.
+- **B12** `server.js` `refreshKassal()` on `main` rewrites `kassal.json` and bumps `rev` every 15 minutes when nothing changed (seen on the Pi).
+- **B15** `public/app.js`: every re-render re-opens collapsed shop cards; Browse responses can arrive out of order and are not refreshed after the shops change.
+- **B16** `deploy/pull-deploy.sh`: a commit with no check runs (`[skip ci]`) reads as pending forever, so the server polls the GitHub API every minute. Found by reading.
+
+Stale docs: Kassalapp's Coop store is named "Coop" (code `COOP_NO`), which `shopKey()` matches to none of the Coop chains, unlike what "Data sources" says. The server's disk is no longer nearly full. Node 20 on the Pi passed end-of-life on 2026-04-30.
