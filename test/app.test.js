@@ -1,8 +1,12 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { createApp } = require('../lib/app');
-const { memoryStore } = require('../lib/store');
+const { memoryStore, fileStore } = require('../lib/store');
+const engine = require('../lib/engine');
 
 const ORIGIN = 'http://tilbud.test';
 const quiet = () => {};
@@ -218,8 +222,8 @@ test('picking a chain that is not fetched yet adds it to the fetch; browse shows
 test('Kassalapp lookups are shared between browsers tracking the same thing', async (t) => {
   const calls = stubApis(t);
   const store = memoryStore();
-  await store.set('settings', { shops: ['257bxm'], kassalKey: 'k' });
-  const app = createApp({ store, env: {}, log: quiet });
+  await store.set('settings', { shops: ['257bxm'] });
+  const app = createApp({ store, env: { KASSAL_KEY: 'k' }, log: quiet });
   const req = (path, body, cookie) => new Request(ORIGIN + path, { method: 'POST', headers: { 'content-type': 'application/json', origin: ORIGIN, ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) });
   const bg = [];
   const opts = { background: (p) => bg.push(p) };
@@ -229,4 +233,151 @@ test('Kassalapp lookups are shared between browsers tracking the same thing', as
   }
   await app.work();
   assert.equal(calls.kassal.length, 1, JSON.stringify(calls.kassal));
+});
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const post = (path, body, cookie, method = 'POST') => new Request(ORIGIN + path, {
+  method, headers: { 'content-type': 'application/json', origin: ORIGIN, ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+});
+const cookieOf = (res) => res.headers.get('set-cookie').split(';')[0];
+
+test('an item saved during a refresh is looked up when that refresh ends, not at the next run', async (t) => {
+  const calls = stubApis(t);
+  let started = 0;
+  t.mock.method(kassal, 'productsForTerms', async (key, terms) => { started++; await sleep(40); calls.kassal.push(terms); return []; });
+  const app = createApp({ store: memoryStore(), env: { KASSAL_KEY: 'k' }, log: quiet });
+  const bg = [];
+  const opts = { background: (p) => bg.push(p) };
+  const first = await app.handle(post('/api/items', { name: 'Melk' }), opts);
+  for (let i = 0; i < 200 && !started; i++) await sleep(5);
+  assert.equal(started, 1, 'the lookup for the first item is running');
+  await app.handle(post('/api/items', { name: 'Smør' }, cookieOf(first)), opts);
+  await Promise.all(bg);
+  assert.deepEqual(calls.kassal, [['melk'], ['smør']]);
+  assert.equal(calls.offers.length, 13, 'the extra pass fetches no offers again');
+});
+
+test('the offer count covers only my shops', async (t) => {
+  stubApis(t);  // one offer per shop
+  const app = createApp({ store: memoryStore(), env: {}, log: quiet });
+  await app.work();
+  const all = await (await app.handle(new Request(ORIGIN + '/api/state'))).json();
+  assert.equal(all.status.offerCount, 13);
+  const mine = await (await app.handle(post('/api/shops', { shops: ['257bxm', 'faa0Ym'] }, null, 'PUT'))).json();
+  assert.equal(mine.status.offerCount, 2);
+});
+
+test('the Kassalapp key is KASSAL_KEY only: one stored in the settings is ignored', async (t) => {
+  const calls = stubApis(t);
+  const store = memoryStore();
+  await store.set('settings', { kassalKey: 'left-over' });
+  const app = createApp({ store, env: {}, log: quiet });
+  const bg = [];
+  const r = await app.handle(post('/api/items', { name: 'Smør' }), { background: (p) => bg.push(p) });
+  assert.equal((await r.json()).settings.kassalKeySet, false);
+  assert.equal(bg.length, 0, 'no key: saving an item starts no refresh');
+  await app.work();
+  assert.deepEqual(calls.kassal, []);
+});
+
+test('a rejected Kassalapp key stops lookups until the key is replaced', async (t) => {
+  stubApis(t);
+  const keys = [];
+  t.mock.method(kassal, 'productsForTerms', async (key) => {
+    keys.push(key);
+    if (key === 'bad') throw Object.assign(new Error('Kassalapp HTTP 401'), { status: 401 });
+    return [];
+  });
+  const store = memoryStore();
+  const state = async (app) => (await (await app.handle(new Request(ORIGIN + '/api/state'))).json()).status;
+  const bad = createApp({ store, env: { KASSAL_KEY: 'bad' }, log: quiet });
+  const bg = [];
+  await bad.handle(post('/api/items', { name: 'Smør' }), { background: (p) => bg.push(p) });
+  await Promise.all(bg);
+  await bad.work();
+  assert.deepEqual(keys, ['bad'], 'asked once, not again on the next run');
+  assert.match((await state(bad)).kassalError, /401/);
+  assert.equal((await state(bad)).kassalRefreshing, false);
+  // The key is fixed in the environment: a new instance looks the item up right away.
+  const good = createApp({ store, env: { KASSAL_KEY: 'good' }, log: quiet });
+  assert.equal((await state(good)).kassalRefreshing, true);
+  await good.work();
+  assert.deepEqual(keys, ['bad', 'good']);
+  assert.equal((await state(good)).kassalError, null);
+});
+
+// A memory store that hands out ETags and answers "unchanged", as Netlify Blobs does.
+function versionedStore() {
+  const inner = memoryStore(), ver = new Map();
+  const tag = (key) => (ver.has(key) ? `v${ver.get(key)}` : undefined);
+  const s = {
+    ...inner, downloads: [], delayMs: 0,
+    async set(key, value) { await inner.set(key, value); ver.set(key, (ver.get(key) || 0) + 1); return { etag: tag(key) }; },
+    async getIfChanged(key, etag) {
+      if (s.delayMs) await sleep(s.delayMs);
+      if (etag && etag === tag(key)) return { unchanged: true };
+      s.downloads.push(key);
+      return { value: structuredClone(await inner.get(key)), etag: tag(key) };  // a fresh object each time, like a download
+    },
+  };
+  return s;
+}
+const bergen = { name: 'Bergen', lat: 60.3913, lng: 5.3221, radiusKm: 10 };
+
+test('shared data that did not change is neither downloaded nor recomputed again', async (t) => {
+  const store = versionedStore();
+  await store.set('settings', { shops: ['257bxm'] });
+  const compute = t.mock.method(engine, 'compute');
+  const app = createApp({ store, env: { DISABLE_FETCH: '1' }, globalTtlMs: 0, log: quiet });  // checks the store on every request
+  const get = async () => (await app.handle(new Request(ORIGIN + '/api/state'))).json();
+  await get(); await get(); await get();
+  assert.equal(store.downloads.filter((k) => k === 'settings').length, 1);
+  assert.equal(compute.mock.callCount(), 1);
+  // Another instance changes the location: the next request has it.
+  await store.set('settings', { shops: ['257bxm'], location: bergen });
+  assert.equal((await get()).settings.location.name, 'Bergen');
+  assert.equal(store.downloads.filter((k) => k === 'settings').length, 2);
+  assert.equal(compute.mock.callCount(), 2);
+});
+
+test('a save made here is not downloaded again afterwards', async () => {
+  const store = versionedStore();
+  const app = createApp({ store, env: { DISABLE_FETCH: '1', ADMIN_CODE: 'open-sesame' }, globalTtlMs: 0, log: quiet });
+  const r = await app.handle(post('/api/settings', { location: bergen, adminCode: 'open-sesame' }, null, 'PUT'));
+  assert.equal(r.status, 200);
+  store.downloads.length = 0;
+  const s = await (await app.handle(new Request(ORIGIN + '/api/state'))).json();
+  assert.equal(s.settings.location.name, 'Bergen');
+  assert.deepEqual(store.downloads.filter((k) => k === 'settings'), []);
+});
+
+test('within the stale window a request is answered from memory while the store is checked', async () => {
+  const store = versionedStore();
+  await store.set('settings', { shops: ['257bxm'] });
+  const app = createApp({ store, env: { DISABLE_FETCH: '1' }, globalTtlMs: 0, globalMaxStaleMs: 60e3, log: quiet });
+  const bg = [];
+  const get = async () => (await app.handle(new Request(ORIGIN + '/api/state'), { background: (p) => bg.push(p) })).json();
+  assert.equal((await get()).settings.location.name, 'Oslo');  // first load waits for the store
+  await Promise.all(bg);
+  bg.length = 0;
+  await store.set('settings', { shops: ['257bxm'], location: bergen });
+  store.delayMs = 50;
+  assert.equal((await get()).settings.location.name, 'Oslo', 'answered from memory');
+  assert.equal(bg.length, 1, 'the check is handed to the host to finish');
+  await Promise.all(bg);
+  assert.equal((await get()).settings.location.name, 'Bergen');
+});
+
+test('file store: writes to one key at the same time all land, and the last one wins', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tilbud-store-'));
+  try {
+    const store = fileStore(dir);
+    const doc = (n) => ({ n, pad: 'x'.repeat(n * 40) });
+    await Promise.all(Array.from({ length: 25 }, (_, n) => store.set('visitors/abc', doc(n))));
+    assert.deepEqual(await store.get('visitors/abc'), doc(24));
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'visitors/abc.json'), 'utf8')), doc(24));
+    assert.deepEqual(fs.readdirSync(path.join(dir, 'visitors')), ['abc.json'], 'no temp files left');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

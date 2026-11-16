@@ -8,7 +8,8 @@ import { blobStore } from '../blob-store.mjs';
 let app;
 
 export default async () => {
-  app ||= core.createApp({ store: blobStore(), env: process.env, globalTtlMs: 0 });
+  // work() checks the store when it starts; within the run that copy is current.
+  app ||= core.createApp({ store: blobStore(), env: process.env, globalTtlMs: 60e3 });
   await app.work({ budgetMs: 18e3 });
 };
 

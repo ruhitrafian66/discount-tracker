@@ -46,7 +46,7 @@ Use **Browse offers** to try terms out. It uses the same matching rules.
 ## Data sources
 
 - **Tjek squid API** (`squid-api.tjek.com/v2`): the backend behind eTilbudsavis.no and Mattilbud.no. Public, location-based, at most 1000 results per query, so offers are fetched per shop. Flyers change on Sunday and run from Monday, so offers are fetched **once a week, Monday 01:00 Oslo time**, and kept for the rest of the week. There is no manual refresh. If the server was down at that time, it catches up once on start. Changing the location or adding a shop fetches only what's missing.
-- **Kassalapp** (`kassal.app/api/v1`): optional, needs a free API key (Settings). Supplies per-chain shelf prices. The regular price is the most common price in the last 90 days, so a short campaign doesn't count as the regular price. A product whose price was last sampled more than 90 days ago is ignored. Looked up weekly with the offers, and right away for new or edited items. When an item's name matches a Kassalapp category (e.g. "Kjøttdeig"), only products in such categories count. That stops a pizza with kjøttdeig in its name from being treated as cheaper kjøttdeig.
+- **Kassalapp** (`kassal.app/api/v1`): optional, needs a free API key in the `KASSAL_KEY` environment variable. Supplies per-chain shelf prices. The regular price is the most common price in the last 90 days, so a short campaign doesn't count as the regular price. A product whose price was last sampled more than 90 days ago is ignored. Looked up weekly with the offers, and right away for new or edited items. When an item's name matches a Kassalapp category (e.g. "Kjøttdeig"), only products in such categories count. That stops a pizza with kjøttdeig in its name from being treated as cheaper kjøttdeig.
 
 ## Layout
 
@@ -71,7 +71,7 @@ node --test test/*.test.js
 DATA_DIR=./data PORT=3913 node server.js     # http://localhost:3913
 ```
 
-Environment variables: `HOST` (default 127.0.0.1), `PORT` (default 3003), `DATA_DIR` (default ./data), and `FETCH_WEEKDAY` / `FETCH_HOUR` for the weekly fetch time (default 1 / 1 = Monday 01:00 Oslo), `DISABLE_FETCH=1` to skip all calls to the external APIs (used in CI), `ADMIN_CODE` for changing the shared settings and `KASSAL_KEY` (see [Your list](#your-list-cookie-no-login)).
+Environment variables: `HOST` (default 127.0.0.1), `PORT` (default 3003), `DATA_DIR` (default ./data), and `FETCH_WEEKDAY` / `FETCH_HOUR` for the weekly fetch time (default 1 / 1 = Monday 01:00 Oslo), `DISABLE_FETCH=1` to skip all calls to the external APIs (used in CI), `ADMIN_CODE` for changing the shared location and `KASSAL_KEY` (see [Your list](#your-list-cookie-no-login)).
 
 ## Deployment (pull-based CD)
 
@@ -112,15 +112,16 @@ One-time setup:
 2. Before the first deploy, under **Site configuration → Environment variables**, set:
    - `ADMIN_CODE`: a code for changing the shared location (without it, it's locked),
    - optionally `KASSAL_KEY`, and `FETCH_WEEKDAY` / `FETCH_HOUR`.
-3. Deploy, open the site, then set location and shops under Settings with the admin code.
+3. Under **Project configuration → Build & deploy → Branches**, set the production branch to `netlify`.
+4. Deploy, open the site, then set the location under Settings with the admin code.
 
-After that, every push to `main` deploys to Netlify as well as to the Pi.
+After that, every push to the `netlify` branch deploys to Netlify. Netlify does not wait for CI, so run the tests before pushing.
 
 Differences from the Pi:
 
 - Netlify stops a scheduled function after 30 seconds, so the weekly fetch may be split over a few 15-minute runs. Monday's first offers can take up to about an hour to complete.
 - Changing the location or shops, or adding an item, starts the fetch or Kassalapp lookup right away, within the request's time limit. Whatever doesn't finish, the next scheduled run picks up.
-- Shared data is cached in each function instance for one minute.
+- Each function instance keeps the shared data in memory and checks the store once a minute; only a document that changed is downloaded again. A request in the ten minutes after that is answered from memory while the check runs, so a change made elsewhere can take one more page load to show.
 - The admin-code throttle (10 wrong codes per 15 minutes) is counted per function instance.
 
 Local check without Netlify: `node --test test/*.test.js` covers the core with an in-memory store. `npx netlify dev` runs the functions with a local Blobs emulator.
