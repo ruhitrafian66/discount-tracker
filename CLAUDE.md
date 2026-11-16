@@ -81,7 +81,12 @@ Do not commit IPs, hostnames/SSH aliases, other services on the server, keys, or
 
 Delete an entry in the commit that fixes it. Counts come from one week of live Oslo data (637 offers, 812 cached Kassalapp products).
 
+- **B3** CI has failed on every push to `netlify` since 2026-11-12: the smoke test in `ci.yml` still asserts the removed login routes (expects 415 from `/api/auth/login`, gets 404; expects 401 from `POST /api/items`, gets 400). Netlify deploys regardless of CI.
+- **B7** `fileStore.set` in `lib/store.js`: the temp file name uses only the pid, so two writes to one key at the same time collide (on `main` this made parallel saves fail).
+- **B9** `work()` in `lib/app.js`: a refresh requested while one is running is dropped, so a new item or a changed location waits for the next 15-minute run. Reproduced on `main`, where it is fixed.
+- **B13** `stateView` in `lib/app.js`: `offerCount` counts every fetched shop, not the visitor's shops.
+- **B14** `kassalKeyOf` in `lib/app.js`: a stored `settings.kassalKey` overrides `KASSAL_KEY`. After a 401 nothing resets `kassal.doneAt` when the env key changes (the comment in `refreshKassal` says it does).
 - **B15** `public/app.js`: every re-render re-opens collapsed shop cards; Browse responses can arrive out of order and are not refreshed after the shops change.
 - **B16** `deploy/pull-deploy.sh`: a commit with no check runs (`[skip ci]`) reads as pending forever, so the server polls the GitHub API every minute. Found by reading.
 
-Stale docs: the server's disk is no longer nearly full. Node 20 on the Pi passed end-of-life on 2026-04-30.
+Stale docs: this branch's README and `deploy/env.example` still describe a Kassalapp key in Settings, shops behind the admin code, and Netlify deploying from `main`. The server's disk is no longer nearly full. Node 20 on the Pi passed end-of-life on 2026-04-30.
